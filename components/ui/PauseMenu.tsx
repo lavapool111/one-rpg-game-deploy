@@ -1,10 +1,14 @@
 'use client';
 
 import { useGameStore, usePlayerStore } from '@/lib/store';
+import { CLASS_INFO } from '@/lib/store/playerStore';
+import { useAccessoryStore } from '@/lib/store/accessoryStore';
+import { useInventoryStore } from '@/lib/store/inventoryStore';
 import { useEffect, useState } from 'react';
 import { InventoryScreen } from './InventoryScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { saveGame } from '@/lib/db';
+import { getSaveData } from '../game/SaveManager';
 
 /**
  * PauseMenu Component
@@ -22,6 +26,8 @@ interface PauseMenuProps {
 
 export function PauseMenu({ defaultOpenInventory = false }: PauseMenuProps) {
     const { setGameState } = useGameStore();
+    const { playerName, setPlayerName, playerClass } = usePlayerStore();
+    const [newName, setNewName] = useState(playerName);
     const [isVisible, setIsVisible] = useState(false);
     const [showInventory, setShowInventory] = useState(defaultOpenInventory);
     const [showSettings, setShowSettings] = useState(false);
@@ -29,6 +35,14 @@ export function PauseMenu({ defaultOpenInventory = false }: PauseMenuProps) {
     useEffect(() => {
         setIsVisible(true);
     }, []);
+
+    const handleSaveName = async () => {
+        setPlayerName(newName);
+        // Force an immediate save to IndexedDB
+        const saveData = getSaveData();
+        await saveGame(saveData);
+        console.log('[PauseMenu] Manual save triggered after rename');
+    };
 
     // Reset inventory state when defaultOpenInventory changes
     useEffect(() => {
@@ -47,25 +61,9 @@ export function PauseMenu({ defaultOpenInventory = false }: PauseMenuProps) {
     };
 
     const handleQuit = async () => {
-        // Save game state
-        const playerState = usePlayerStore.getState();
-        await saveGame({
-            level: playerState.level,
-            health: playerState.health,
-            xp: playerState.xp,
-            echoes: playerState.echoes,
-            position: {
-                x: playerState.position[0],
-                y: playerState.position[1],
-                z: playerState.position[2]
-            },
-            inventory: playerState.inventory,
-            equippedReed: playerState.equippedReed,
-            reedDurability: playerState.reedDurability,
-            embouchure: playerState.embouchure,
-            embouchureXp: playerState.embouchureXp,
-            dungeonTimeBonus: playerState.dungeonTimeBonus
-        });
+        // Save game state using the unified getter
+        const saveData = getSaveData();
+        await saveGame(saveData);
 
         setIsVisible(false);
         setTimeout(() => {
@@ -97,6 +95,26 @@ export function PauseMenu({ defaultOpenInventory = false }: PauseMenuProps) {
                 </h2>
 
                 <div className="flex flex-col gap-4">
+                    {/* Rename Section */}
+                    <div className="bg-black/40 rounded p-4 border border-yellow-600/10">
+                        <h3 className="text-yellow-500 font-bold mb-2 uppercase text-[10px] tracking-widest opacity-80">Character Name</h3>
+                        <div className="flex gap-2">
+                            <input
+                                type="text"
+                                value={newName}
+                                onChange={(e) => setNewName(e.target.value)}
+                                placeholder={CLASS_INFO[playerClass].name}
+                                className="flex-1 bg-slate-800/80 border border-yellow-600/20 rounded px-3 py-1.5 text-white text-sm focus:border-yellow-500/50 outline-none transition-colors placeholder:text-slate-500"
+                            />
+                            <button
+                                onClick={handleSaveName}
+                                className="bg-yellow-600/20 hover:bg-yellow-600/40 text-yellow-500 border border-yellow-600/30 font-bold text-[10px] uppercase tracking-wider px-3 py-1.5 rounded transition-all active:scale-95"
+                            >
+                                Save
+                            </button>
+                        </div>
+                    </div>
+
                     <PauseButton onClick={handleResume} autoFocus>
                         Resume
                     </PauseButton>

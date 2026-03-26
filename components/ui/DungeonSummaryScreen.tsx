@@ -90,6 +90,15 @@ export function DungeonSummaryScreen() {
                         {rewards.moonlightAzarite > 0 && (
                             <RewardItem label="Moonlight Azarite" value={rewards.moonlightAzarite} icon="💎" />
                         )}
+                        {rewards.sheetMusicCommon > 0 && (
+                            <RewardItem label="Common Sheet Music" value={rewards.sheetMusicCommon} icon="🎶" />
+                        )}
+                        {rewards.sheetMusicRare > 0 && (
+                            <RewardItem label="Rare Sheet Music" value={rewards.sheetMusicRare} icon="🎹" />
+                        )}
+                        {rewards.sheetMusicLegendary > 0 && (
+                            <RewardItem label="Legendary Sheet Music" value={rewards.sheetMusicLegendary} icon="🎼" />
+                        )}
                         {rewards.reeds.length > 0 && (
                             <RewardItem label={terms.reeds} value={rewards.reeds.length} icon="🎵" />
                         )}

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { subscribeWithSelector } from 'zustand/middleware';
 import { usePlayerStore } from './playerStore';
+import { useAccessoryStore } from './accessoryStore';
+import { useInventoryStore } from './inventoryStore';
 import { getTierFromGold, generateTierRewards, DungeonTier, DungeonRewards, TIER_DISPLAY_NAMES } from '../game/dungeonTiers';
 
 /**
@@ -16,6 +18,7 @@ export interface DungeonState {
     timeLimit: number;
     goldCollected: number;
     keys: { melodic: number; resonance: number };
+    trialRoomKills: number;
 }
 
 export interface DungeonResult {
@@ -44,6 +47,9 @@ export interface GameStore {
     dungeonState: DungeonState | null;
     lastDungeonResult: DungeonResult | null;
 
+    // Enemy Buff State
+    activeEuphoniumShields: number;
+
     // Actions
     setGameState: (state: GameState) => void;
     addScore: (points: number) => void;
@@ -55,6 +61,10 @@ export interface GameStore {
     resetCombo: () => void;
     resetGame: () => void;
 
+    // Enemy Buff Actions
+    addEuphoniumShield: () => void;
+    removeEuphoniumShield: () => void;
+
     // Dungeon actions
     enterDungeon: () => void;
     exitDungeon: () => void;
@@ -65,6 +75,21 @@ export interface GameStore {
     useKey: (type: 'melodic' | 'resonance') => boolean; // Consume key, returns true if successful
     addDungeonTime: (seconds: number) => void; // Debug: add time
     clearDungeonResult: () => void; // Clear last dungeon result
+    incrementTrialRoomKills: () => void;
+
+    // --- Altar Room State ---
+    altarRoomWave: number;
+    isInAltarRoom: boolean;
+    altarRoomWaveEnemiesRemaining: number;
+    altarRoomWaveEnemiesTotal: number;
+    altarDeathCount: number;
+    currentAltarIndex: number;
+    setAltarRoomWave: (wave: number) => void;
+    setIsInAltarRoom: (isInRoom: boolean) => void;
+    setAltarRoomWaveEnemies: (remaining: number, total: number) => void;
+    incrementAltarDeathCount: () => void;
+    resetAltarDeathCount: () => void;
+    setAltarIndex: (index: number) => void;
 }
 
 const INITIAL_HEALTH = 100;
@@ -85,6 +110,30 @@ export const useGameStore = create<GameStore>()(
         currentLocation: 'band_room',
         dungeonState: null,
         lastDungeonResult: null,
+
+        // Enemy Buff State
+        activeEuphoniumShields: 0,
+
+        // --- Altar Room ---
+        altarRoomWave: 0,
+        isInAltarRoom: false,
+        altarRoomWaveEnemiesRemaining: 0,
+        altarRoomWaveEnemiesTotal: 0,
+        altarDeathCount: 0,
+        currentAltarIndex: 0,
+        setAltarRoomWave: (wave: number) => set({ altarRoomWave: wave }),
+        setIsInAltarRoom: (isInRoom: boolean) => set({ isInAltarRoom: isInRoom }),
+        setAltarRoomWaveEnemies: (remaining: number, total: number) => set({
+            altarRoomWaveEnemiesRemaining: remaining,
+            altarRoomWaveEnemiesTotal: total
+        }),
+        incrementAltarDeathCount: () => set((state: GameStore) => ({ altarDeathCount: state.altarDeathCount + 1 })),
+        resetAltarDeathCount: () => set({ altarDeathCount: 0 }),
+        setAltarIndex: (index: number) => set({ currentAltarIndex: index }),
+
+        // Enemy Buff Actions
+        addEuphoniumShield: () => set((state) => ({ activeEuphoniumShields: state.activeEuphoniumShields + 1 })),
+        removeEuphoniumShield: () => set((state) => ({ activeEuphoniumShields: Math.max(0, state.activeEuphoniumShields - 1) })),
 
         // Actions
         setGameState: (gameState) => set({ gameState }),
@@ -123,12 +172,19 @@ export const useGameStore = create<GameStore>()(
             combo: 0,
             currentLocation: 'band_room',
             dungeonState: null,
+            lastDungeonResult: null,
+            activeEuphoniumShields: 0,
+            altarRoomWave: 0,
+            isInAltarRoom: false,
+            altarRoomWaveEnemiesRemaining: 0,
+            altarRoomWaveEnemiesTotal: 0,
+            altarDeathCount: 0,
+            currentAltarIndex: 0
         }),
 
         // Dungeon actions
-        // Dungeon actions
         enterDungeon: () => {
-            const timeLimit = usePlayerStore.getState().getDungeonTimeLimit();
+            const timeLimit = useAccessoryStore.getState().getDungeonTimeLimit();
             set({
                 currentLocation: 'backstage_halls',
                 dungeonState: {
@@ -136,6 +192,7 @@ export const useGameStore = create<GameStore>()(
                     timeLimit: timeLimit,
                     goldCollected: 0,
                     keys: { melodic: 0, resonance: 0 },
+                    trialRoomKills: 0,
                 },
             });
         },
@@ -168,12 +225,18 @@ export const useGameStore = create<GameStore>()(
             }
 
             // Materials
-            if (rewards.valves > 0) playerStore.addMaterial('valves', rewards.valves);
-            if (rewards.heavyValves > 0) playerStore.addMaterial('heavy_valves', rewards.heavyValves);
-            if (rewards.corkGrease > 0) playerStore.addMaterial('cork_grease', rewards.corkGrease);
-            if (rewards.valveOil > 0) playerStore.addMaterial('valve_oil', rewards.valveOil);
-            if (rewards.slides > 0) playerStore.addMaterial('trombone_slides', rewards.slides);
-            if (rewards.brassIngots > 0) playerStore.addMaterial('brass_ingots', rewards.brassIngots);
+            if (rewards.valves > 0) useInventoryStore.getState().addMaterial('valves', rewards.valves);
+            if (rewards.heavyValves > 0) useInventoryStore.getState().addMaterial('heavy_valves', rewards.heavyValves);
+            if (rewards.corkGrease > 0) useInventoryStore.getState().addMaterial('cork_grease', rewards.corkGrease);
+            if (rewards.valveOil > 0) useInventoryStore.getState().addMaterial('valve_oil', rewards.valveOil);
+            if (rewards.slides > 0) useInventoryStore.getState().addMaterial('trombone_slides', rewards.slides);
+            if (rewards.brassIngots > 0) useInventoryStore.getState().addMaterial('brass_ingots', rewards.brassIngots);
+            if (rewards.moonlightAzarite > 0) useInventoryStore.getState().addMaterial('moonlight_azarite', rewards.moonlightAzarite);
+            if (rewards.reinforcedIngots > 0) useInventoryStore.getState().addMaterial('reinforced_brass_ingots', rewards.reinforcedIngots);
+            if (rewards.infusedIngots > 0) useInventoryStore.getState().addMaterial('infused_brass_ingots', rewards.infusedIngots);
+            if (rewards.sheetMusicCommon > 0) useInventoryStore.getState().addMaterial('sheet_music_fragments_common', rewards.sheetMusicCommon);
+            if (rewards.sheetMusicRare > 0) useInventoryStore.getState().addMaterial('sheet_music_fragments_rare', rewards.sheetMusicRare);
+            if (rewards.sheetMusicLegendary > 0) useInventoryStore.getState().addMaterial('sheet_music_fragments_legendary', rewards.sheetMusicLegendary);
 
             // Reeds - Note: Reeds are equipped items, not materials. Logging for now.
             if (rewards.reeds.length > 0) {
@@ -260,6 +323,12 @@ export const useGameStore = create<GameStore>()(
 
         // Clear last dungeon result
         clearDungeonResult: () => set({ lastDungeonResult: null }),
+
+        incrementTrialRoomKills: () => set((state) => ({
+            dungeonState: state.dungeonState
+                ? { ...state.dungeonState, trialRoomKills: state.dungeonState.trialRoomKills + 1 }
+                : null,
+        })),
     }))
 );
 

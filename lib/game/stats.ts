@@ -7,6 +7,8 @@ export interface LevelStats {
 // The user provided ranges like "1-10: +4", "11-20: +8"
 // This implies that moving FROM level X to X+1 where X is in range gets the bonus.
 // E.g. Level 1 -> 2 (X=1, in 1-10) gets +4.
+// Most people shouldn't push past 1000.
+
 const STAT_INCREMENTS = [
     { maxLevel: 10, hp: 4, dmg: 1 },
     { maxLevel: 20, hp: 8, dmg: 2 },
@@ -68,6 +70,47 @@ const STAT_INCREMENTS = [
     { maxLevel: 580, hp: 8320, dmg: 864 },
     { maxLevel: 590, hp: 8640, dmg: 888 },
     { maxLevel: 600, hp: 9120, dmg: 924 },
+    { maxLevel: 610, hp: 9600, dmg: 972 },
+    { maxLevel: 620, hp: 10240, dmg: 1008 },
+    { maxLevel: 630, hp: 10800, dmg: 1056 },
+    { maxLevel: 640, hp: 11520, dmg: 1104 },
+    { maxLevel: 650, hp: 12240, dmg: 1152 },
+    { maxLevel: 660, hp: 12960, dmg: 1200 },
+    { maxLevel: 670, hp: 13680, dmg: 1248 },
+    { maxLevel: 680, hp: 14400, dmg: 1296 },
+    { maxLevel: 690, hp: 15120, dmg: 1344 },
+    { maxLevel: 700, hp: 16500, dmg: 1440 },
+    { maxLevel: 710, hp: 17280, dmg: 1488 },
+    { maxLevel: 720, hp: 18000, dmg: 1536 },
+    { maxLevel: 730, hp: 18720, dmg: 1584 },
+    { maxLevel: 740, hp: 19500, dmg: 1632 },
+    { maxLevel: 750, hp: 20280, dmg: 1680 },
+    { maxLevel: 760, hp: 21120, dmg: 1728 },
+    { maxLevel: 770, hp: 21960, dmg: 1776 },
+    { maxLevel: 780, hp: 22800, dmg: 1824 },
+    { maxLevel: 790, hp: 23640, dmg: 1872 },
+    { maxLevel: 800, hp: 24480, dmg: 1920 },
+    { maxLevel: 810, hp: 25200, dmg: 1968 },
+    { maxLevel: 820, hp: 26420, dmg: 2016 },
+    { maxLevel: 830, hp: 27640, dmg: 2064 },
+    { maxLevel: 840, hp: 28800, dmg: 2160 },
+    { maxLevel: 850, hp: 30120, dmg: 2208 },
+    { maxLevel: 860, hp: 31560, dmg: 2256 },
+    { maxLevel: 870, hp: 33000, dmg: 2304 },
+    { maxLevel: 880, hp: 34560, dmg: 2352 },
+    { maxLevel: 890, hp: 36000, dmg: 2460 },
+    { maxLevel: 900, hp: 37500, dmg: 2520 },
+    { maxLevel: 910, hp: 39000, dmg: 2642 },
+    { maxLevel: 920, hp: 40500, dmg: 2880 },
+    { maxLevel: 930, hp: 42000, dmg: 3012 },
+    { maxLevel: 940, hp: 43500, dmg: 3240 },
+    { maxLevel: 950, hp: 45000, dmg: 3456 },
+    { maxLevel: 960, hp: 46500, dmg: 3600 },
+    { maxLevel: 970, hp: 48000, dmg: 3960 },
+    { maxLevel: 980, hp: 49500, dmg: 4200 },
+    { maxLevel: 990, hp: 51000, dmg: 4440 },
+    { maxLevel: 1000, hp: 52500, dmg: 4680 },
+    { maxLevel: 10000, hp: 105000, dmg: 9360 },
 ];
 
 /**
@@ -94,16 +137,23 @@ const ENEMY_HP_BANDS = [
     { maxLevel: 10, mult: 0 },
     { maxLevel: 20, mult: 0.015 },
     { maxLevel: 30, mult: 0.03 },
-    { maxLevel: 40, mult: 0.045 },
-    { maxLevel: 50, mult: 0.06 },
-    { maxLevel: 60, mult: 0.075 },
-    { maxLevel: 70, mult: 0.09 },
-    { maxLevel: 80, mult: 0.105 },
-    { maxLevel: 90, mult: 0.12 },
-    { maxLevel: 100, mult: 0.125 },
-    { maxLevel: 120, mult: 0.13 },
-    { maxLevel: 150, mult: 0.135 },
-    { maxLevel: 2000, mult: 0 },
+    { maxLevel: 40, mult: -0.015 },
+    { maxLevel: 50, mult: 0.04 },
+    { maxLevel: 60, mult: -0.015 },
+    { maxLevel: 70, mult: 0.05 },
+    { maxLevel: 80, mult: -0.015 },
+    { maxLevel: 90, mult: 0.06 },
+    { maxLevel: 100, mult: -0.015 },
+    { maxLevel: 120, mult: 0.07 },
+    { maxLevel: 150, mult: 0 },
+    { maxLevel: 180, mult: 0.08 },
+    { maxLevel: 210, mult: -0.015 },
+    { maxLevel: 240, mult: 0.09 },
+    { maxLevel: 270, mult: -0.015 },
+    { maxLevel: 300, mult: 0.10 },
+    { maxLevel: 400, mult: 0.01 },
+    { maxLevel: 500, mult: -0.003 },
+    { maxLevel: 2000, mult: 0.0001 },
 ];
 
 /**
@@ -147,37 +197,49 @@ export function getXpRequiredForLevel(currentLevel: number): number {
 
     const bandone = [
         5, 10, 20, 30, 40, 60, 75, 120, 160, 200,
-        2400, 3000, 3750, 4500, 5100, 5850, 6700, 7800, 9000, 10500,
-        12000, 14000, 16500, 19500, 20400, 21600, 23800, 25200, 28800,
+        2400, 2700, 3000, 3300, 3750, 4200, 4600, 5100, 5600, 6000, 6600, 7200, 7800, 8400, 9000, 9750, 10500,
+        12000, 13000, 14000, 15000, 16500, 18000, 19500, 20400, 21600, 23800, 25200, 27200, 28800,
         30000, 32000, 33600, 36000, 37800, 39600, 41600, 43200, 44000,
         45600, 47800, 49500, 50400, 52800, 54600, 57600, 62400, 67800,
         71800, 75600, 79200, 84000, 89600, 92400, 97200, 103500, 112000,
-        126000, 140000, 156000, 172000, 195000, 216000
+        126000, 140000, 156000, 172000, 195000, 216000, 234000, 252000,
+        288000, 324000, 356000, 378000, 396000, 432000, 456000, 480000,
+        528000, 552000, 594000, 660000, 720000, 792000, 864000, 972000,
+        1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1840000, 2000000, 2160000,
+        3240000, 4320000, 5400000, 6720000, 7560000, 9240000, 12000000, 15600000, 20000000,
+        25200000, 32400000, 43200000, 48000000, 54000000, 64000000, 75600000, 86400000, 92400000, 105600000, 126000000
     ];
 
-    let simLevel = 1;
+    let level = 1;
+    let alina = 10
 
-    // We simulate the exact loop structure
+
     for (const one of bandone) {
-        for (let i = 0; i < 10; i++) {
+        for (let i = 0; i < alina; i++) {
             // Logic from snippet
-            if (simLevel === 100) {
+            if (level === 100) {
                 start = hundred;
-            } else if (simLevel === 101) {
+            } else if (level === 101) {
                 start = onezeroone;
             } else {
                 start += one;
             }
 
+            if (level > 1000) {
+                alina = 100
+            }
+
             // If we found the XP needed for the requested level, return it
-            if (simLevel === currentLevel) {
+            if (level === currentLevel) {
                 return start;
             }
 
-            simLevel++;
+            level++;
         }
     }
 
-    // Fallback if level exceeds table (should be rare/impossible with this many entries ~550 levels)
+    // Fallback if level exceeds table (should be rare/impossible with this many entries ~1000 levels)
     return start + 10000;
 }
+
+

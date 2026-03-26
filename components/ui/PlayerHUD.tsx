@@ -1,15 +1,16 @@
 'use client';
 
 import { usePlayerStore } from '@/lib/store';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo, memo } from 'react';
 import { getTerms, CLASS_INFO } from '@/lib/store/playerStore';
+import { useShallow } from 'zustand/react/shallow';
 
 /**
  * PlayerHUD Component
  * Displays player stats: health bar, xp bar, level, and cooldowns
  * Positioned in the top-right corner
  */
-export function PlayerHUD() {
+export const PlayerHUD = memo(function PlayerHUD() {
     const {
         level,
         health,
@@ -18,13 +19,31 @@ export function PlayerHUD() {
         maxXp,
         damage,
         speed,
+        embouchure,
         lastAttackTime,
         attackCooldown,
         tempo,
-        tempoRating,
+        rating,
         lastKillTime,
-        position
-    } = usePlayerStore();
+        playerName,
+        playerClass,
+    } = usePlayerStore(useShallow(state => ({
+        level: state.level,
+        health: state.health,
+        maxHealth: state.maxHealth,
+        xp: state.xp,
+        maxXp: state.maxXp,
+        damage: state.damage,
+        speed: state.speed,
+        embouchure: state.embouchure,
+        lastAttackTime: state.lastAttackTime,
+        attackCooldown: state.attackCooldown,
+        tempo: state.tempo,
+        rating: state.rating,
+        lastKillTime: state.lastKillTime,
+        playerName: state.playerName,
+        playerClass: state.playerClass,
+    })));
 
     // Local state for smooth cooldown animation
     const [cooldownProgress, setCooldownProgress] = useState(0);
@@ -38,13 +57,13 @@ export function PlayerHUD() {
 
         if (timeUntilExpiry <= 0) {
             // Already expired
-            usePlayerStore.setState({ tempo: 0, tempoRating: 'F' });
+            usePlayerStore.setState({ tempo: 0, rating: 'F' });
             return;
         }
 
         // Set timeout to reset when combo expires
         const timerId = setTimeout(() => {
-            usePlayerStore.setState({ tempo: 0, tempoRating: 'F' });
+            usePlayerStore.setState({ tempo: 0, rating: 'F' });
         }, timeUntilExpiry);
 
         return () => clearTimeout(timerId);
@@ -90,8 +109,6 @@ export function PlayerHUD() {
         return 'bg-red-700';
     };
 
-    const { embouchure } = usePlayerStore();
-    const playerClass = usePlayerStore((state) => state.playerClass);
     const terms = getTerms(playerClass);
 
     return (
@@ -101,7 +118,7 @@ export function PlayerHUD() {
 
                 {/* Header: Class & Level */}
                 <div className="flex items-center justify-between mb-3">
-                    <span className="text-white font-bold text-shadow-sm">{CLASS_INFO[playerClass].name}</span>
+                    <span className="text-white font-bold text-shadow-sm">{playerName || CLASS_INFO[playerClass].name}</span>
                     <div className="bg-gradient-to-r from-purple-600 to-indigo-600 px-2 py-0.5 rounded shadow-sm text-white text-xs font-bold border border-white/20">
                         LV {level}
                     </div>
@@ -143,8 +160,8 @@ export function PlayerHUD() {
                         <span className="text-orange-400 text-xs font-bold uppercase">Tempo</span>
                         <span className="text-white font-bold">{tempo}x</span>
                     </div>
-                    <div className={`font-black text-xl ${tempoRating === 'Z' ? 'text-yellow-400 animate-pulse' : tempoRating === 'SSS' ? 'text-purple-400' : tempoRating === 'SS' ? 'text-blue-400' : tempoRating === 'S' ? 'text-green-400' : 'text-white'}`}>
-                        {tempoRating}
+                    <div className={`font-black text-xl ${rating === 'Z' ? 'text-yellow-400 animate-pulse' : rating === 'SSS' ? 'text-purple-400' : rating === 'SS' ? 'text-blue-400' : rating === 'S' ? 'text-green-400' : 'text-white'}`}>
+                        {rating}
                     </div>
                 </div>
 
@@ -195,31 +212,38 @@ export function PlayerHUD() {
             </div>
 
             {/* Player Position Display */}
-            <div className="bg-black/80 backdrop-blur-md rounded-xl px-4 py-3 min-w-[200px] border border-white/10 shadow-xl">
-                <div className="flex items-center gap-2 mb-2">
-                    <span className="text-lg">📍</span>
-                    <span className="text-white/80 text-xs font-bold uppercase tracking-wide">Position</span>
-                </div>
-                <div className="grid grid-cols-3 gap-2 text-center">
-                    <div className="bg-red-900/40 rounded-lg px-2 py-1.5 border border-red-500/30">
-                        <div className="text-red-400 text-[9px] font-bold uppercase">X</div>
-                        <div className="text-white font-mono font-bold text-sm">{Math.round(position[0])}</div>
-                    </div>
-                    <div className="bg-green-900/40 rounded-lg px-2 py-1.5 border border-green-500/30">
-                        <div className="text-green-400 text-[9px] font-bold uppercase">Y</div>
-                        <div className="text-white font-mono font-bold text-sm">{position[1].toFixed(1)}</div>
-                    </div>
-                    <div className="bg-blue-900/40 rounded-lg px-2 py-1.5 border border-blue-500/30">
-                        <div className="text-blue-400 text-[9px] font-bold uppercase">Z</div>
-                        <div className="text-white font-mono font-bold text-sm">{Math.round(position[2])}</div>
-                    </div>
-                </div>
-            </div>
+            <PositionDisplay />
 
             {/* Mobile-friendly spacing */}
             <div className="h-safe-bottom" />
         </div>
     );
-}
+});
 
 export default PlayerHUD;
+
+function PositionDisplay() {
+    const position = usePlayerStore((state) => state.position);
+    return (
+        <div className="bg-black/80 backdrop-blur-md rounded-xl px-4 py-3 min-w-[200px] border border-white/10 shadow-xl">
+            <div className="flex items-center gap-2 mb-2">
+                <span className="text-lg">📍</span>
+                <span className="text-white/80 text-xs font-bold uppercase tracking-wide">Position</span>
+            </div>
+            <div className="grid grid-cols-3 gap-2 text-center">
+                <div className="bg-red-900/40 rounded-lg px-2 py-1.5 border border-red-500/30">
+                    <div className="text-red-400 text-[9px] font-bold uppercase">X</div>
+                    <div className="text-white font-mono font-bold text-sm">{Math.round(position[0])}</div>
+                </div>
+                <div className="bg-green-900/40 rounded-lg px-2 py-1.5 border border-green-500/30">
+                    <div className="text-green-400 text-[9px] font-bold uppercase">Y</div>
+                    <div className="text-white font-mono font-bold text-sm">{position[1].toFixed(1)}</div>
+                </div>
+                <div className="bg-blue-900/40 rounded-lg px-2 py-1.5 border border-blue-500/30">
+                    <div className="text-blue-400 text-[9px] font-bold uppercase">Z</div>
+                    <div className="text-white font-mono font-bold text-sm">{Math.round(position[2])}</div>
+                </div>
+            </div>
+        </div>
+    );
+}

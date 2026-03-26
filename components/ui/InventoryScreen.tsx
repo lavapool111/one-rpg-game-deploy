@@ -2,7 +2,9 @@
 
 import { useState } from 'react';
 import { usePlayerStore } from '@/lib/store';
-import { getTerms, getAbilityName, localizeItemName } from '@/lib/store/playerStore';
+import { useAccessoryStore } from '@/lib/store/accessoryStore';
+import { useInventoryStore } from '@/lib/store/inventoryStore';
+import { getTerms, getAbilityName, localizeItemName, SLOT_BONUSES } from '@/lib/store/playerStore';
 import {
     ItemCategory,
     ITEM_DEFINITIONS,
@@ -26,8 +28,37 @@ import {
     MouthpieceInstance,
     getMouthpieceStats,
     getMouthpieceData,
-    getMouthpieceUpgradeCost
+    getMouthpieceUpgradeCost,
+    CASE_DATA,
+    CaseId,
+    CaseInstance,
+    getCaseStats,
+    getCaseData,
+    getCaseUpgradeCost,
+    EnchantmentId,
+    EnchantmentTier,
+    EnchantmentInstance,
+    ENCHANTMENT_DATA,
+    getEnchantmentData,
+    ENCHANTMENT_SLOT_LEVELS,
+    getEnchantmentsForTier,
+    MeldType,
+    MELD_TYPE_INFO,
+    MELD_UNLOCK_LEVEL,
+    getMeldStats,
+    getMeldTierCost
 } from '@/lib/game/inventory';
+import { EnchantmentScreen } from './EnchantmentScreen';
+import { AbilityUpgradeSubTab } from './AbilityUpgradeSubTab';
+import { AbilityUpgradeScreen } from './AbilityUpgradeScreen';
+
+// Sub-components
+import { InventorySlot } from './inventory/InventorySlot';
+import { RecipeCard } from './inventory/RecipeCard';
+import { DungeonTimeUpgradeCard } from './inventory/DungeonTimeUpgradeCard';
+import { UpgradeCard } from './inventory/UpgradeCard';
+import { EquippedItemSummary } from './inventory/EquippedItemSummary';
+import { CategoryTabs, SubTabs } from './inventory/InventoryTabSystem';
 
 /**
  * Inventory Screen Component
@@ -44,39 +75,81 @@ interface InventoryScreenProps {
 }
 
 export function InventoryScreen({ onClose }: InventoryScreenProps) {
-    const [activeTab, setActiveTab] = useState<ItemCategory | 'crafting'>('materials');
+    const [activeTab, setActiveTab] = useState<'materials' | 'accessories' | 'crafting' | 'enchantments' | 'ability_upgrades'>('materials');
     const [selectedItemId, setSelectedItemId] = useState<ItemId | null>(null);
     const [hoveredItemId, setHoveredItemId] = useState<ItemId | null>(null);
+    const [showEnchantmentScreen, setShowEnchantmentScreen] = useState(false);
+    const [showAbilityUpgradeScreen, setShowAbilityUpgradeScreen] = useState(false);
 
-    const inventory = usePlayerStore((state) => state.inventory);
+    const inventory = useInventoryStore((state) => state.inventory);
     const echoes = usePlayerStore((state) => state.echoes);
-    const equippedReed = usePlayerStore((state) => state.equippedReed);
-    const equipReed = usePlayerStore((state) => state.equipReed);
-    const unequipReed = usePlayerStore((state) => state.unequipReed);
-    const craftRecipe = usePlayerStore((state) => state.craftRecipe);
-    const upgradeDungeonTime = usePlayerStore((state) => state.upgradeDungeonTime);
-    const getNextDungeonUpgradeCost = usePlayerStore((state) => state.getNextDungeonUpgradeCost);
-    const getDungeonTimeLimit = usePlayerStore((state) => state.getDungeonTimeLimit);
+    const equippedReed = useAccessoryStore((state) => state.equippedReed);
+    const reedDurability = useAccessoryStore((state) => state.reedDurability);
+    const equipReed = useAccessoryStore((state) => state.equipReed);
+    const unequipReed = useAccessoryStore((state) => state.unequipReed);
+    const craftRecipe = useInventoryStore((state) => state.craftRecipe);
+    const upgradeDungeonTime = useAccessoryStore((state) => state.upgradeDungeonTime);
+    const getNextDungeonUpgradeCost = useAccessoryStore((state) => state.getNextDungeonUpgradeCost);
+    const getDungeonTimeLimit = useAccessoryStore((state) => state.getDungeonTimeLimit);
 
     // Ligature hooks
-    const equippedLigature = usePlayerStore((state) => state.equippedLigature);
-    const equipLigature = usePlayerStore((state) => state.equipLigature);
-    const unequipLigature = usePlayerStore((state) => state.unequipLigature);
-    const craftLigature = usePlayerStore((state) => state.craftLigature);
-    const upgradeLigature = usePlayerStore((state) => state.upgradeLigature);
-    const getLigatureBonus = usePlayerStore((state) => state.getLigatureBonus);
-    const accessorySlots = usePlayerStore((state) => state.accessorySlots);
+    const equippedLigature = useAccessoryStore((state) => state.equippedLigature);
+    const equipLigature = useAccessoryStore((state) => state.equipLigature);
+    const unequipLigature = useAccessoryStore((state) => state.unequipLigature);
+    const craftLigature = useAccessoryStore((state) => state.craftLigature);
+    const upgradeLigature = useAccessoryStore((state) => state.upgradeLigature);
+    const getLigatureBonus = useAccessoryStore((state) => state.getLigatureBonus);
+    const accessorySlots = useAccessoryStore((state) => state.accessorySlots);
 
     // Mouthpiece hooks
-    const equippedMouthpiece = usePlayerStore((state) => state.equippedMouthpiece);
-    const equipMouthpiece = usePlayerStore((state) => state.equipMouthpiece);
-    const unequipMouthpiece = usePlayerStore((state) => state.unequipMouthpiece);
-    const craftMouthpiece = usePlayerStore((state) => state.craftMouthpiece);
-    const upgradeMouthpiece = usePlayerStore((state) => state.upgradeMouthpiece);
-    const getMouthpieceBonus = usePlayerStore((state) => state.getMouthpieceBonus);
+    const equippedMouthpiece = useAccessoryStore((state) => state.equippedMouthpiece);
+    const equipMouthpiece = useAccessoryStore((state) => state.equipMouthpiece);
+    const unequipMouthpiece = useAccessoryStore((state) => state.unequipMouthpiece);
+    const craftMouthpiece = useAccessoryStore((state) => state.craftMouthpiece);
+    const upgradeMouthpiece = useAccessoryStore((state) => state.upgradeMouthpiece);
+    const getMouthpieceBonus = useAccessoryStore((state) => state.getMouthpieceBonus);
+
+    // Case hooks
+    const equippedCase = useAccessoryStore((state) => state.equippedCase);
+    const equipCase = useAccessoryStore((state) => state.equipCase);
+    const unequipCase = useAccessoryStore((state) => state.unequipCase);
+    const craftCase = useAccessoryStore((state) => state.craftCase);
+    const upgradeCase = useAccessoryStore((state) => state.upgradeCase);
+    const getCaseBonus = useAccessoryStore((state) => state.getCaseBonus);
+
+    // Case melding hooks
+    const meldCase = useAccessoryStore((state) => state.meldCase);
+    const getMeldBonus = useAccessoryStore((state) => state.getMeldBonus);
+
+    // Enchantment hooks
+    const equippedEnchantments = useAccessoryStore((state) => state.equippedEnchantments);
+    const enchantmentSlots = useAccessoryStore((state) => state.enchantmentSlots);
+    const equipEnchantment = useAccessoryStore((state) => state.equipEnchantment);
+    const unequipEnchantment = useAccessoryStore((state) => state.unequipEnchantment);
+    const craftEnchantment = useAccessoryStore((state) => state.craftEnchantment);
+    const getEnchantmentBonus = useAccessoryStore((state) => state.getEnchantmentBonus);
+    const isEnchantmentSlotUnlocked = useAccessoryStore((state) => state.isEnchantmentSlotUnlocked);
+    const level = usePlayerStore((state) => state.level);
+
+    // Slot position hooks
+    const ligatureSlot = useAccessoryStore((state) => state.ligatureSlot);
+    const mouthpieceSlot = useAccessoryStore((state) => state.mouthpieceSlot);
+    const reedSlot = useAccessoryStore((state) => state.reedSlot);
+    const caseSlot = useAccessoryStore((state) => state.caseSlot);
+    const setLigatureSlot = useAccessoryStore((state) => state.setLigatureSlot);
+    const setMouthpieceSlot = useAccessoryStore((state) => state.setMouthpieceSlot);
+    const setReedSlot = useAccessoryStore((state) => state.setReedSlot);
+    const setCaseSlot = useAccessoryStore((state) => state.setCaseSlot);
+    const getSlotContent = useAccessoryStore((state) => state.getSlotContent);
+
+    // Selected slot for placement UI (null = no slot selected)
+    const [selectedSlot, setSelectedSlot] = useState<number | null>(null);
 
     // Crafting sub-tab state
-    const [craftingSubTab, setCraftingSubTab] = useState<'materials' | 'reeds' | 'ligatures' | 'mouthpieces'>('materials');
+    const [craftingSubTab, setCraftingSubTab] = useState<'materials' | 'reeds' | 'ligatures' | 'mouthpieces' | 'cases'>('materials');
+
+    // Materials sub-tab state
+    const [materialSubTab, setMaterialSubTab] = useState<'general' | 'case_fragments'>('general');
 
     // Player class for terminology
     const playerClass = usePlayerStore((state) => state.playerClass);
@@ -99,180 +172,360 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
     // Get items for the current category
     const renderItems = () => {
         switch (activeTab) {
-            case 'materials':
-                return (
-                    <div className="grid grid-cols-4 gap-3">
-                        {(Object.keys(inventory.materials) as MaterialItemId[]).map((itemId) => {
-                            const quantity = inventory.materials[itemId];
-                            const item = ITEM_DEFINITIONS[itemId];
-                            if (!item) return null;
+            case 'materials': {
+                // Case Fragment item IDs for filtering
+                const caseFragmentIds: Set<MaterialItemId> = new Set([
+                    'plated_fragment_t1', 'plated_fragment_t2', 'plated_fragment_t3', 'plated_fragment_t4', 'plated_fragment_t5',
+                    'weaved_fragment_t1', 'weaved_fragment_t2', 'weaved_fragment_t3', 'weaved_fragment_t4', 'weaved_fragment_t5',
+                    'sundered_fragment_t1', 'sundered_fragment_t2', 'sundered_fragment_t3', 'sundered_fragment_t4', 'sundered_fragment_t5',
+                    'metallic_fragment_t1', 'metallic_fragment_t2', 'metallic_fragment_t3', 'metallic_fragment_t4', 'metallic_fragment_t5',
+                    'corrupted_fragment_t1', 'corrupted_fragment_t2', 'corrupted_fragment_t3', 'corrupted_fragment_t4', 'corrupted_fragment_t5',
+                ]);
 
-                            return (
-                                <InventorySlot
-                                    key={itemId}
-                                    name={localizeItemName(item.name, playerClass)}
-                                    quantity={quantity}
-                                    rarity={item.rarity}
-                                    description={item.description}
-                                    isSelected={selectedItemId === itemId}
-                                    onHover={(hovering) => setHoveredItemId(hovering ? itemId : null)}
-                                    onClick={() => setSelectedItemId(itemId)}
-                                />
-                            );
-                        })}
+                const fragmentGroups: { label: string; emoji: string; ids: MaterialItemId[] }[] = [
+                    { label: 'Plated Fragments', emoji: '🛡️', ids: ['plated_fragment_t1', 'plated_fragment_t2', 'plated_fragment_t3', 'plated_fragment_t4', 'plated_fragment_t5'] },
+                    { label: 'Weaved Fragments', emoji: '🧵', ids: ['weaved_fragment_t1', 'weaved_fragment_t2', 'weaved_fragment_t3', 'weaved_fragment_t4', 'weaved_fragment_t5'] },
+                    { label: 'Sundered Fragments', emoji: '⚡', ids: ['sundered_fragment_t1', 'sundered_fragment_t2', 'sundered_fragment_t3', 'sundered_fragment_t4', 'sundered_fragment_t5'] },
+                    { label: 'Metallic Fragments', emoji: '⚙️', ids: ['metallic_fragment_t1', 'metallic_fragment_t2', 'metallic_fragment_t3', 'metallic_fragment_t4', 'metallic_fragment_t5'] },
+                    { label: 'Corrupted Fragments', emoji: '💀', ids: ['corrupted_fragment_t1', 'corrupted_fragment_t2', 'corrupted_fragment_t3', 'corrupted_fragment_t4', 'corrupted_fragment_t5'] },
+                ];
+
+                return (
+                    <div className="space-y-3">
+                        <SubTabs
+                            tabs={['general', 'case_fragments'] as const}
+                            activeTab={materialSubTab}
+                            onTabChange={setMaterialSubTab}
+                            getLabel={(tab) => tab === 'general' ? 'General' : 'Case Fragments'}
+                        />
+
+                        {materialSubTab === 'general' && (
+                            <div className="grid grid-cols-4 gap-3">
+                                {(Object.keys(inventory.materials) as MaterialItemId[])
+                                    .filter(id => !caseFragmentIds.has(id))
+                                    .map((itemId) => {
+                                        const quantity = inventory.materials[itemId] || 0;
+                                        const item = ITEM_DEFINITIONS[itemId];
+                                        if (!item && !itemId) return null;
+                                        const itemName = item?.name || itemId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                                        return (
+                                            <InventorySlot
+                                                key={itemId}
+                                                name={localizeItemName(itemName, playerClass)}
+                                                quantity={quantity}
+                                                rarity={item?.rarity || 'common'}
+                                                description={item?.description || ''}
+                                                isSelected={selectedItemId === itemId}
+                                                onHover={(hovering) => setHoveredItemId(hovering ? itemId : null)}
+                                                onClick={() => setSelectedItemId(itemId)}
+                                            />
+                                        );
+                                    })}
+                            </div>
+                        )}
+
+                        {materialSubTab === 'case_fragments' && (
+                            <div className="space-y-4">
+                                {fragmentGroups.map((group) => (
+                                    <div key={group.label}>
+                                        <h3 className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-2">{group.emoji} {group.label}</h3>
+                                        <div className="grid grid-cols-5 gap-2">
+                                            {group.ids.map((itemId) => {
+                                                const quantity = inventory.materials[itemId] || 0;
+                                                const item = ITEM_DEFINITIONS[itemId];
+                                                const itemName = item?.name || itemId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
+                                                return (
+                                                    <InventorySlot
+                                                        key={itemId}
+                                                        name={localizeItemName(itemName, playerClass)}
+                                                        quantity={quantity}
+                                                        rarity={item?.rarity || 'common'}
+                                                        description={item?.description || ''}
+                                                        isSelected={selectedItemId === itemId}
+                                                        onHover={(hovering) => setHoveredItemId(hovering ? itemId : null)}
+                                                        onClick={() => setSelectedItemId(itemId)}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 );
+            }
 
-            case 'reeds':
-                return (
-                    <div className="grid grid-cols-3 gap-3">
-                        {(Object.keys(inventory.reeds) as ReedStrength[])
-                            .filter(strength => parseFloat(strength) <= maxInventoryVisible)
-                            .map((strength) => {
-                                const quantity = inventory.reeds[strength];
-                                const item = ITEM_DEFINITIONS[strength];
-                                if (!item) return null;
 
-                                return (
-                                    <InventorySlot
-                                        key={strength}
-                                        name={localizeItemName(item.name, playerClass)}
-                                        quantity={quantity}
-                                        rarity={item.rarity}
-                                        description={item.description}
-                                        isSelected={selectedItemId === strength}
-                                        isEquipped={equippedReed === strength}
-                                        onHover={(hovering) => setHoveredItemId(hovering ? strength : null)}
-                                        onClick={() => setSelectedItemId(strength)}
-                                    />
-                                );
-                            })}
-                    </div>
-                );
 
             case 'accessories': {
                 const ligatureBonus = getLigatureBonus();
+
+                // Helper to render a slot based on its content
+                const renderSlot = (slotIndex: number) => {
+                    const isSelected = selectedSlot === slotIndex;
+                    const hasLigature = ligatureSlot === slotIndex && equippedLigature;
+                    const hasMouthpiece = mouthpieceSlot === slotIndex && equippedMouthpiece;
+                    const hasReed = reedSlot === slotIndex && equippedReed;
+                    const hasCase = caseSlot === slotIndex && equippedCase;
+                    const isEmpty = !hasLigature && !hasMouthpiece && !hasReed && !hasCase;
+                    const bonus = Math.round((SLOT_BONUSES[slotIndex] || 0) * 100);
+
+                    let borderColor = 'border-slate-700';
+                    let bgColor = 'bg-slate-800/30';
+
+                    if (hasLigature) { borderColor = 'border-green-500'; bgColor = 'bg-green-900/20'; }
+                    if (hasMouthpiece) { borderColor = 'border-orange-500'; bgColor = 'bg-orange-900/20'; }
+                    if (hasReed) { borderColor = 'border-cyan-500'; bgColor = 'bg-cyan-900/20'; }
+                    if (hasCase) { borderColor = 'border-purple-500'; bgColor = 'bg-purple-900/20'; }
+                    if (isSelected) { borderColor = 'border-yellow-400'; bgColor = 'bg-yellow-900/20'; }
+
+                    return (
+                        <div
+                            key={slotIndex}
+                            className={`p-2 rounded-lg border-2 ${borderColor} ${bgColor} flex flex-col items-center justify-center min-h-[72px] cursor-pointer hover:border-yellow-500/50 transition-colors relative overflow-hidden`}
+                            onClick={() => setSelectedSlot(isSelected ? null : slotIndex)}
+                        >
+                            {/* Bonus Badge */}
+                            {bonus > 0 && (
+                                <div className={`absolute top-0 right-0 text-[8px] font-bold px-1 rounded-bl ${isEmpty ? 'bg-slate-700 text-slate-400' : 'bg-yellow-500/80 text-black'}`}>
+                                    +{bonus}%
+                                </div>
+                            )}
+
+                            {hasLigature && (
+                                <>
+                                    <span className="text-lg">🎺</span>
+                                    <p className="text-[10px] text-center text-green-400 truncate w-full px-1">
+                                        {localizeItemName(getLigatureData(equippedLigature!.id).name, playerClass)}
+                                    </p>
+                                    <p className="text-[9px] text-slate-400">Lv {equippedLigature?.level ?? 'Undefined'}</p>
+                                </>
+                            )}
+                            {hasMouthpiece && (
+                                <>
+                                    <span className="text-lg">{equippedMouthpiece!.id === 'plastic' ? '🎵' : '🎶'}</span>
+                                    <p className="text-[10px] text-center text-orange-400 truncate w-full px-1">
+                                        {playerClass === 'viola' ? getMouthpieceData(equippedMouthpiece!.id).violaName : getMouthpieceData(equippedMouthpiece!.id).name}
+                                    </p>
+                                    <p className="text-[9px] text-slate-400">Lv {equippedMouthpiece?.level ?? 'Undefined'}</p>
+                                </>
+                            )}
+                            {hasReed && (
+                                <>
+                                    <span className="text-lg">🎼</span>
+                                    <p className="text-[10px] text-center text-cyan-400 truncate w-full px-1">
+                                        {localizeItemName(ITEM_DEFINITIONS[equippedReed!]?.name || `${terms.reed} ${equippedReed}`, playerClass)}
+                                    </p>
+                                    <p className="text-[9px] text-slate-400">{Math.floor((reedDurability || 0) / 60)}m left</p>
+                                </>
+                            )}
+                            {hasCase && (
+                                <>
+                                    <span className="text-lg">📦</span>
+                                    <p className="text-[10px] text-center text-purple-400 truncate w-full px-1">
+                                        {getCaseBonus()?.name || 'Undefined'}
+                                    </p>
+                                    <p className="text-[9px] text-slate-400">Lv {equippedCase?.level ?? 'Undefined'}</p>
+                                </>
+                            )}
+                            {isEmpty && (
+                                <>
+                                    <p className="text-[10px] text-slate-500 font-medium">Slot {slotIndex + 1}</p>
+                                    {bonus > 0 && <p className="text-[9px] text-yellow-600/70">+{bonus}% Stats</p>}
+                                </>
+                            )}
+                        </div>
+                    );
+                };
+
                 return (
                     <div className="space-y-4">
                         {/* Accessory Slots Grid - 4x2 */}
                         <div>
-                            <h3 className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-2">Accessory Slots ({accessorySlots} slots)</h3>
+                            <h3 className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-2">Accessory Slots ({accessorySlots} slots) - Click to select</h3>
                             <div className="grid grid-cols-4 gap-2">
-                                {/* Slot 1: Ligature */}
-                                <div
-                                    className={`p-2 rounded-lg border ${equippedLigature ? 'border-green-500 bg-green-900/20' : 'border-slate-600 bg-slate-800/50'} flex flex-col items-center justify-center min-h-[72px]`}
-                                >
-                                    {equippedLigature ? (
-                                        <>
-                                            <span className="text-lg">🎺</span>
-                                            <p className="text-[10px] text-center text-green-400 truncate w-full">
-                                                {localizeItemName(getLigatureData(equippedLigature.id).name.split(' ').slice(0, 2).join(' '), playerClass)}
-                                            </p>
-                                            <p className="text-[9px] text-slate-400">Lv {equippedLigature.level}</p>
-                                        </>
-                                    ) : (
-                                        <p className="text-[10px] text-slate-500">{terms.ligature}</p>
-                                    )}
-                                </div>
-                                {/* Slot 2: Mouthpiece */}
-                                <div
-                                    className={`p-2 rounded-lg border ${equippedMouthpiece ? 'border-orange-500 bg-orange-900/20' : 'border-slate-600 bg-slate-800/50'} flex flex-col items-center justify-center min-h-[72px]`}
-                                >
-                                    {equippedMouthpiece ? (
-                                        <>
-                                            <span className="text-lg">{equippedMouthpiece.id === 'plastic' ? '🎵' : '🎶'}</span>
-                                            <p className="text-[10px] text-center text-orange-400 truncate w-full">
-                                                {playerClass === 'viola' ? getMouthpieceData(equippedMouthpiece.id).violaName : getMouthpieceData(equippedMouthpiece.id).name}
-                                            </p>
-                                            <p className="text-[9px] text-slate-400">Lv {equippedMouthpiece.level}</p>
-                                        </>
-                                    ) : (
-                                        <p className="text-[10px] text-slate-500">{playerClass === 'viola' ? 'Rosin' : 'Mouthpiece'}</p>
-                                    )}
-                                </div>
-                                {/* Remaining 6 empty slots */}
-                                {Array.from({ length: 6 }).map((_, i) => (
-                                    <div key={i} className="p-2 rounded-lg border border-slate-700 bg-slate-800/30 flex items-center justify-center min-h-[72px]">
-                                        <p className="text-[10px] text-slate-600">Empty</p>
-                                    </div>
-                                ))}
+                                {Array.from({ length: 8 }).map((_, i) => renderSlot(i))}
                             </div>
                         </div>
 
-                        {/* Equipped Ligature Stats */}
-                        {equippedLigature && (
-                            <div className="p-3 rounded-lg border border-yellow-600/30 bg-slate-800/50">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-yellow-500 font-semibold">{localizeItemName(getLigatureData(equippedLigature.id).name, playerClass)}</span>
+                        {/* Slot Selection Panel - Shows when a slot is selected */}
+                        {selectedSlot !== null && (
+                            <div className="p-3 rounded-lg border border-yellow-500/50 bg-yellow-900/10">
+                                <div className="flex items-center justify-between mb-3">
+                                    <h3 className="text-yellow-400 font-semibold text-sm">Slot {selectedSlot + 1} - Choose Accessory</h3>
                                     <button
-                                        onClick={() => unequipLigature()}
-                                        className="px-2 py-1 text-xs bg-red-900/50 hover:bg-red-800 text-red-400 rounded"
-                                    >
-                                        Unequip
-                                    </button>
+                                        onClick={() => setSelectedSlot(null)}
+                                        className="text-slate-400 hover:text-white text-lg"
+                                    >×</button>
                                 </div>
-                                <div className="grid grid-cols-2 gap-2 text-xs">
+                                <div className="grid grid-cols-3 gap-2">
+                                    {/* Ligatures */}
+                                    {inventory.ligatures.length > 0 && inventory.ligatures.map((lig, idx) => {
+                                        const data = getLigatureData(lig.id);
+                                        const isEquippedHere = ligatureSlot === selectedSlot && equippedLigature?.id === lig.id && equippedLigature?.level === lig.level;
+                                        const isEquippedElsewhere = equippedLigature?.id === lig.id && equippedLigature?.level === lig.level && ligatureSlot !== selectedSlot;
+                                        return (
+                                            <button
+                                                key={`lig-${idx}`}
+                                                disabled={isEquippedElsewhere}
+                                                onClick={() => {
+                                                    if (isEquippedHere) {
+                                                        unequipLigature();
+                                                        setLigatureSlot(-1);
+                                                    } else {
+                                                        equipLigature(idx);
+                                                        setLigatureSlot(selectedSlot);
+                                                    }
+                                                    setSelectedSlot(null);
+                                                }}
+                                                className={`p-2 rounded border text-left ${isEquippedHere ? 'border-green-500 bg-green-900/30' : isEquippedElsewhere ? 'border-slate-600 bg-slate-800/50 opacity-50 cursor-not-allowed' : 'border-slate-600 bg-slate-800/50 hover:border-green-500/50'}`}
+                                            >
+                                                <div className="flex items-center gap-1">
+                                                    <span>🎺</span>
+                                                    <span className={`text-[10px] ${getRarityColor(data.rarity)}`}>{localizeItemName(data.name, playerClass)}</span>
+                                                </div>
+                                                <div className="text-[9px] text-slate-400">Lv {lig.level}</div>
+                                                {isEquippedHere && <div className="text-[9px] text-green-400">Click to remove</div>}
+                                                {isEquippedElsewhere && <div className="text-[9px] text-slate-500">In slot {ligatureSlot + 1}</div>}
+                                            </button>
+                                        );
+                                    })}
+                                    {/* Mouthpieces */}
+                                    {inventory.mouthpieces.length > 0 && inventory.mouthpieces.map((mp, idx) => {
+                                        const data = getMouthpieceData(mp.id);
+                                        const displayName = playerClass === 'viola' ? data.violaName : data.name;
+                                        const isEquippedHere = mouthpieceSlot === selectedSlot && equippedMouthpiece?.id === mp.id && equippedMouthpiece?.level === mp.level;
+                                        const isEquippedElsewhere = equippedMouthpiece?.id === mp.id && equippedMouthpiece?.level === mp.level && mouthpieceSlot !== selectedSlot;
+                                        return (
+                                            <button
+                                                key={`mp-${idx}`}
+                                                disabled={isEquippedElsewhere}
+                                                onClick={() => {
+                                                    if (isEquippedHere) {
+                                                        unequipMouthpiece();
+                                                        setMouthpieceSlot(-1);
+                                                    } else {
+                                                        equipMouthpiece(idx);
+                                                        setMouthpieceSlot(selectedSlot);
+                                                    }
+                                                    setSelectedSlot(null);
+                                                }}
+                                                className={`p-2 rounded border text-left ${isEquippedHere ? 'border-orange-500 bg-orange-900/30' : isEquippedElsewhere ? 'border-slate-600 bg-slate-800/50 opacity-50 cursor-not-allowed' : 'border-slate-600 bg-slate-800/50 hover:border-orange-500/50'}`}
+                                            >
+                                                <div className="flex items-center gap-1">
+                                                    <span>{mp.id === 'plastic' ? '🎵' : '🎶'}</span>
+                                                    <span className={`text-[10px] ${getRarityColor(data.rarity)}`}>{displayName}</span>
+                                                </div>
+                                                <div className="text-[9px] text-slate-400">Lv {mp.level}</div>
+                                                {isEquippedHere && <div className="text-[9px] text-orange-400">Click to remove</div>}
+                                                {isEquippedElsewhere && <div className="text-[9px] text-slate-500">In slot {mouthpieceSlot + 1}</div>}
+                                            </button>
+                                        );
+                                    })}
+                                    {/* Reeds */}
+                                    {(Object.keys(inventory.reeds) as ReedStrength[])
+                                        .filter(strength => parseFloat(strength) <= maxInventoryVisible && inventory.reeds[strength] > 0)
+                                        .map((strength) => {
+                                            const item = ITEM_DEFINITIONS[strength];
+                                            const isEquippedHere = reedSlot === selectedSlot && equippedReed === strength;
+                                            const isEquippedElsewhere = equippedReed === strength && reedSlot !== selectedSlot && reedSlot !== -1;
+                                            if (!item) return null;
+                                            return (
+                                                <button
+                                                    key={`reed-${strength}`}
+                                                    disabled={isEquippedElsewhere}
+                                                    onClick={() => {
+                                                        if (isEquippedHere) {
+                                                            unequipReed();
+                                                            setReedSlot(-1);
+                                                        } else {
+                                                            equipReed(strength);
+                                                            setReedSlot(selectedSlot);
+                                                        }
+                                                        setSelectedSlot(null);
+                                                    }}
+                                                    className={`p-2 rounded border text-left ${isEquippedHere ? 'border-cyan-500 bg-cyan-900/30' : isEquippedElsewhere ? 'border-slate-600 bg-slate-800/50 opacity-50 cursor-not-allowed' : 'border-slate-600 bg-slate-800/50 hover:border-cyan-500/50'}`}
+                                                >
+                                                    <div className="flex items-center gap-1">
+                                                        <span>🎼</span>
+                                                        <span className={`text-[10px] ${getRarityColor(item.rarity)}`}>{localizeItemName(item.name, playerClass)}</span>
+                                                    </div>
+                                                    <div className="text-[9px] text-slate-400">x{inventory.reeds[strength]}</div>
+                                                    {isEquippedHere && <div className="text-[9px] text-cyan-400">Click to remove</div>}
+                                                    {isEquippedElsewhere && <div className="text-[9px] text-slate-500">In slot {reedSlot + 1}</div>}
+                                                </button>
+                                            );
+                                        })}
+                                    {/* Cases */}
+                                    {inventory.cases.length > 0 && inventory.cases.map((caseItem, idx) => {
+                                        const data = getCaseData(caseItem.id);
+                                        const stats = getCaseStats(caseItem.id, caseItem.level);
+                                        const isEquippedHere = caseSlot === selectedSlot && equippedCase?.id === caseItem.id && equippedCase?.level === caseItem.level;
+                                        const isEquippedElsewhere = equippedCase?.id === caseItem.id && equippedCase?.level === caseItem.level && caseSlot !== selectedSlot;
+                                        return (
+                                            <button
+                                                key={`case-${idx}`}
+                                                disabled={isEquippedElsewhere}
+                                                onClick={() => {
+                                                    if (isEquippedHere) {
+                                                        unequipCase();
+                                                        setCaseSlot(-1);
+                                                    } else {
+                                                        equipCase(idx);
+                                                        setCaseSlot(selectedSlot);
+                                                    }
+                                                    setSelectedSlot(null);
+                                                }}
+                                                className={`p-2 rounded border text-left ${isEquippedHere ? 'border-purple-500 bg-purple-900/30' : isEquippedElsewhere ? 'border-slate-600 bg-slate-800/50 opacity-50 cursor-not-allowed' : 'border-slate-600 bg-slate-800/50 hover:border-purple-500/50'}`}
+                                            >
+                                                <div className="flex items-center gap-1">
+                                                    <span>📦</span>
+                                                    <span className={`text-[10px] ${getRarityColor(data.rarity)}`}>{stats.name}</span>
+                                                </div>
+                                                <div className="text-[9px] text-slate-400">Lv {caseItem.level}</div>
+                                                {isEquippedHere && <div className="text-[9px] text-purple-400">Click to remove</div>}
+                                                {isEquippedElsewhere && <div className="text-[9px] text-slate-500">In slot {caseSlot + 1}</div>}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                                {inventory.ligatures.length === 0 && inventory.mouthpieces.length === 0 && Object.values(inventory.reeds).every(q => q === 0) && inventory.cases.length === 0 && (
+                                    <p className="text-slate-500 text-sm text-center py-2">No accessories available. Craft some in the Crafting tab!</p>
+                                )}
+                            </div>
+                        )}
+
+                        <div className="space-y-3">
+                            {/* Equipped Ligature Stats */}
+                            {equippedLigature && (
+                                <EquippedItemSummary
+                                    title={`${localizeItemName(getLigatureData(equippedLigature.id).name, playerClass)}`}
+                                    slotIndex={ligatureSlot}
+                                    colorClass="yellow-500"
+                                    borderColorClass="yellow-600/30"
+                                    onUnequip={() => { unequipLigature(); setLigatureSlot(-1); }}
+                                >
                                     <div className="text-slate-400">
                                         {getAbilityName(playerClass)}: <span className="text-green-400">+{(ligatureBonus.longToneDurationMs / 1000).toFixed(1)}s</span>
                                     </div>
                                     <div className="text-slate-400">
-                                        Tuba Defense: <span className="text-blue-400">+{(ligatureBonus.lowBrassDefense * 100).toFixed(0)}%</span>
+                                        Tuba Damage: <span className="text-blue-400">+{(ligatureBonus.tubaDamageBonus * 100).toFixed(0)}%</span>
                                     </div>
-                                </div>
-                            </div>
-                        )}
-
-                        {/* Owned Ligatures */}
-                        <div>
-                            <h3 className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-2">Owned {terms.ligatures}</h3>
-                            {inventory.ligatures.length === 0 ? (
-                                <p className="text-slate-500 text-sm">No {terms.ligatures.toLowerCase()}. Craft them in the Crafting tab!</p>
-                            ) : (
-                                <div className="grid grid-cols-2 gap-2">
-                                    {inventory.ligatures.map((lig, index) => {
-                                        const data = getLigatureData(lig.id);
-                                        const stats = getLigatureStats(lig.id, lig.level);
-                                        const isEquipped = equippedLigature?.id === lig.id && equippedLigature?.level === lig.level;
-                                        return (
-                                            <div
-                                                key={index}
-                                                className={`p-2 rounded-lg border ${isEquipped ? 'border-green-500 bg-green-900/20' : 'border-slate-600 bg-slate-800/50'} cursor-pointer hover:border-yellow-500/50`}
-                                                onClick={() => !isEquipped && equipLigature(index)}
-                                            >
-                                                <div className="flex items-center justify-between">
-                                                    <span className={`text-xs font-medium ${getRarityColor(data.rarity)}`}>
-                                                        {localizeItemName(data.name, playerClass)}
-                                                    </span>
-                                                    <span className="text-[10px] text-slate-400">Lv {lig.level}</span>
-                                                </div>
-                                                <div className="text-[10px] text-slate-500 mt-1">
-                                                    +{stats.longToneBonus.toFixed(1)}s / +{(stats.lowBrassDefense * 100).toFixed(0)}% def
-                                                </div>
-                                                {isEquipped && (
-                                                    <span className="text-[10px] text-green-400">Equipped</span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
+                                </EquippedItemSummary>
                             )}
-                        </div>
 
-                        {/* Equipped Mouthpiece Stats */}
-                        {equippedMouthpiece && (
-                            <div className="p-3 rounded-lg border border-orange-600/30 bg-slate-800/50">
-                                <div className="flex items-center justify-between mb-2">
-                                    <span className="text-orange-500 font-semibold">
-                                        {playerClass === 'viola' ? getMouthpieceData(equippedMouthpiece.id).violaName : getMouthpieceData(equippedMouthpiece.id).name} (Lv {equippedMouthpiece.level})
-                                    </span>
-                                    <button
-                                        onClick={() => unequipMouthpiece()}
-                                        className="px-2 py-1 text-xs bg-red-900/50 hover:bg-red-800 text-red-400 rounded"
-                                    >
-                                        Unequip
-                                    </button>
-                                </div>
-                                <div className="grid grid-cols-2 gap-2 text-xs">
+                            {/* Equipped Mouthpiece Stats */}
+                            {equippedMouthpiece && (
+                                <EquippedItemSummary
+                                    title={`${playerClass === 'viola' ? getMouthpieceData(equippedMouthpiece.id).violaName : getMouthpieceData(equippedMouthpiece.id).name} Lv ${equippedMouthpiece.level}`}
+                                    slotIndex={mouthpieceSlot}
+                                    colorClass="orange-500"
+                                    borderColorClass="orange-600/30"
+                                    onUnequip={() => { unequipMouthpiece(); setMouthpieceSlot(-1); }}
+                                >
                                     {getMouthpieceBonus().critFactor > 0 && (
                                         <div className="text-slate-400">
                                             Crit Factor: <span className="text-orange-400">+{getMouthpieceBonus().critFactor.toFixed(1)}</span>
@@ -283,44 +536,65 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                             Crit Chance: <span className="text-orange-400">+{(getMouthpieceBonus().critChance * 100).toFixed(0)}%</span>
                                         </div>
                                     )}
-                                </div>
-                            </div>
-                        )}
+                                </EquippedItemSummary>
+                            )}
 
-                        {/* Owned Mouthpieces */}
-                        <div>
-                            <h3 className="text-orange-500 text-xs font-bold uppercase tracking-wider mb-2">Owned {playerClass === 'viola' ? 'Rosin' : 'Mouthpieces'}</h3>
-                            {inventory.mouthpieces.length === 0 ? (
-                                <p className="text-slate-500 text-sm">No {playerClass === 'viola' ? 'rosin' : 'mouthpieces'}. Craft them in the Crafting tab!</p>
-                            ) : (
-                                <div className="grid grid-cols-2 gap-2">
-                                    {inventory.mouthpieces.map((mp, index) => {
-                                        const data = getMouthpieceData(mp.id);
-                                        const stats = getMouthpieceStats(mp.id, mp.level);
-                                        const isEquipped = equippedMouthpiece?.id === mp.id && equippedMouthpiece?.level === mp.level;
-                                        const displayName = playerClass === 'viola' ? data.violaName : data.name;
-                                        return (
-                                            <div
-                                                key={index}
-                                                className={`p-2 rounded-lg border ${isEquipped ? 'border-orange-500 bg-orange-900/20' : 'border-slate-600 bg-slate-800/50'} cursor-pointer hover:border-orange-500/50`}
-                                                onClick={() => !isEquipped && equipMouthpiece(index)}
-                                            >
-                                                <div className="flex items-center justify-between">
-                                                    <span className={`text-xs font-medium ${getRarityColor(data.rarity)}`}>
-                                                        {displayName}
-                                                    </span>
-                                                    <span className="text-[10px] text-slate-400">Lv {mp.level}</span>
-                                                </div>
-                                                <div className="text-[10px] text-slate-500 mt-1">
-                                                    {stats.critFactor > 0 ? `+${stats.critFactor.toFixed(1)} crit factor` : `+${(stats.critChance * 100).toFixed(0)}% crit chance`}
-                                                </div>
-                                                {isEquipped && (
-                                                    <span className="text-[10px] text-orange-400">Equipped</span>
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
+                            {/* Equipped Reed Stats */}
+                            {equippedReed && (
+                                <EquippedItemSummary
+                                    title={localizeItemName(ITEM_DEFINITIONS[equippedReed]?.name || `${terms.reed} ${equippedReed}`, playerClass)}
+                                    slotIndex={reedSlot}
+                                    colorClass="cyan-500"
+                                    borderColorClass="cyan-600/30"
+                                    onUnequip={() => { unequipReed(); setReedSlot(-1); }}
+                                    gridCols={3}
+                                    footer={`Durability: ${Math.floor(reedDurability / 60)}m ${Math.floor(reedDurability % 60)}s remaining`}
+                                >
+                                    <div className="text-slate-400">
+                                        Crit: <span className="text-cyan-400">+{((REED_MULTIPLIERS[equippedReed]?.crit || 0) * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div className="text-slate-400">
+                                        Def: <span className="text-blue-400">+{((REED_MULTIPLIERS[equippedReed]?.def || 0) * 100).toFixed(1)}%</span>
+                                    </div>
+                                    <div className="text-slate-400">
+                                        Spd: <span className="text-green-400">+{Math.round(((REED_MULTIPLIERS[equippedReed]?.speed || 1) - 1) * 100)}%</span>
+                                    </div>
+                                </EquippedItemSummary>
+                            )}
+
+                            {/* Equipped Case Stats */}
+                            {equippedCase && (
+                                <EquippedItemSummary
+                                    title={`${getCaseBonus()?.name || 'Undefined'} Lv ${equippedCase?.level ?? 'Undefined'}`}
+                                    slotIndex={caseSlot}
+                                    colorClass="purple-500"
+                                    borderColorClass="purple-600/30"
+                                    onUnequip={() => { unequipCase(); setCaseSlot(-1); }}
+                                    footer={equippedCase?.meldType && equippedCase?.meldTier && equippedCase.meldTier >= 1 && (
+                                        <div className="text-slate-400 mt-1">
+                                            Meld: <span className="text-amber-400">{MELD_TYPE_INFO[equippedCase.meldType].emoji} {MELD_TYPE_INFO[equippedCase.meldType].name} (Tier {equippedCase.meldTier})</span>
+                                            {equippedCase.meldTier >= 2 && (() => {
+                                                const meldStats = getMeldStats(equippedCase.meldType!, equippedCase.meldTier!);
+                                                let statDisplay = '';
+                                                if (meldStats.defense > 0) statDisplay = `+${(meldStats.defense * 100).toFixed(1)}% Defense`;
+                                                else if (meldStats.selfHeal > 0) statDisplay = `+${(meldStats.selfHeal * 100).toFixed(2)}% HP/s`;
+                                                else if (meldStats.critChance > 0) statDisplay = `+${(meldStats.critChance * 100).toFixed(1)}% Crit`;
+                                                else if (meldStats.impact > 0) statDisplay = `+${meldStats.impact} Impact`;
+                                                else if (meldStats.lifesteal > 0) statDisplay = `+${(meldStats.lifesteal * 100).toFixed(2)}% LifeSteal`;
+                                                return <span className="text-xs text-amber-300 ml-1">({statDisplay})</span>;
+                                            })()}
+                                        </div>
+                                    )}
+                                >
+                                    <div className="text-slate-400">
+                                        Health: <span className="text-purple-400">×{(getCaseBonus()?.healthMultiplier || 1).toFixed(2)}</span>
+                                    </div>
+                                    {(getCaseBonus()?.speedBonus || 0) > 0 && (
+                                        <div className="text-slate-400">
+                                            Speed: <span className="text-green-400">+{(getCaseBonus()?.speedBonus || 0).toFixed(2)} ft/s</span>
+                                        </div>
+                                    )}
+                                </EquippedItemSummary>
                             )}
                         </div>
                     </div>
@@ -330,21 +604,12 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
             case 'crafting':
                 return (
                     <div className="space-y-3">
-                        {/* Crafting Sub-Tabs */}
-                        <div className="flex gap-2 border-b border-slate-700 pb-2">
-                            {(['materials', 'reeds', 'ligatures', 'mouthpieces'] as const).map((subTab) => (
-                                <button
-                                    key={subTab}
-                                    onClick={() => setCraftingSubTab(subTab)}
-                                    className={`px-3 py-1 text-xs font-medium rounded-t transition-colors ${craftingSubTab === subTab
-                                        ? 'bg-yellow-600/30 text-yellow-400 border-b-2 border-yellow-500'
-                                        : 'text-slate-400 hover:text-slate-200'
-                                        }`}
-                                >
-                                    {subTab === 'materials' ? 'Materials & Upgrades' : subTab === 'reeds' ? terms.reeds : subTab === 'ligatures' ? terms.ligatures : subTab === 'mouthpieces' ? (playerClass === 'viola' ? 'Rosin' : 'Mouthpieces') : subTab}
-                                </button>
-                            ))}
-                        </div>
+                        <SubTabs
+                            tabs={['materials', 'reeds', 'ligatures', 'mouthpieces', 'cases'] as const}
+                            activeTab={craftingSubTab}
+                            onTabChange={setCraftingSubTab}
+                            getLabel={(tab) => tab === 'materials' ? 'Materials & Upgrades' : tab === 'reeds' ? terms.reeds : tab === 'ligatures' ? terms.ligatures : tab === 'mouthpieces' ? (playerClass === 'viola' ? 'Rosin' : 'Mouthpieces') : 'Cases'}
+                        />
 
                         {/* Materials Sub-Tab */}
                         {craftingSubTab === 'materials' && (
@@ -405,60 +670,19 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                     <h3 className="text-purple-400 text-xs font-bold uppercase tracking-wider mb-2">Craft New {terms.ligatures}</h3>
                                     <div className="space-y-2">
                                         {LIGATURE_DATA.map((ligature) => {
-                                            const recipe = ALL_RECIPES.find(r => r.id === `ligature_${ligature.id}_craft`);
+                                            const recipeId = `ligature_${ligature.id}_craft`;
+                                            const recipe = ALL_RECIPES.find(r => r.id === recipeId);
                                             if (!recipe) return null;
 
-                                            // Check if can afford
-                                            const canAfford = recipe.ingredients.every(ing => {
-                                                const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
-                                                return have >= ing.quantity;
-                                            });
-
                                             return (
-                                                <div key={ligature.id} className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
-                                                    {/* Output Info */}
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-10 h-10 rounded bg-purple-900/30 border border-purple-600/50 flex items-center justify-center text-xl">
-                                                            🎼
-                                                        </div>
-                                                        <div>
-                                                            <div className={`font-bold ${getRarityColor(ligature.rarity)}`}>
-                                                                {localizeItemName(ligature.name, playerClass)}
-                                                            </div>
-                                                            <div className="text-xs text-slate-400">{ligature.description}</div>
-                                                            <div className="text-[10px] text-purple-400">
-                                                                +{ligature.longToneBonus}s Long Tone / +{(ligature.lowBrassDefense * 100).toFixed(0)}% Tuba Def
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Ingredients & Button */}
-                                                    <div className="flex items-center gap-6">
-                                                        <div className="flex flex-col gap-1 text-xs">
-                                                            {recipe.ingredients.map((ing, i) => {
-                                                                const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
-                                                                const enough = have >= ing.quantity;
-                                                                return (
-                                                                    <div key={i} className={`flex items-center gap-1 ${enough ? 'text-slate-400' : 'text-red-400'}`}>
-                                                                        <span>{ing.quantity}x {ITEM_DEFINITIONS[ing.itemId]?.name || ing.itemId}</span>
-                                                                        <span className="opacity-50">({have})</span>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-
-                                                        <button
-                                                            onClick={() => craftLigature(ligature.id)}
-                                                            disabled={!canAfford}
-                                                            className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canAfford
-                                                                ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20'
-                                                                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                                                                }`}
-                                                        >
-                                                            Craft
-                                                        </button>
-                                                    </div>
-                                                </div>
+                                                <RecipeCard
+                                                    key={recipeId}
+                                                    recipe={recipe}
+                                                    inventory={inventory}
+                                                    echoes={echoes}
+                                                    onCraft={() => craftLigature(ligature.id)}
+                                                    playerClass={playerClass}
+                                                />
                                             );
                                         })}
                                     </div>
@@ -470,73 +694,20 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                         <h3 className="text-purple-400 text-xs font-bold uppercase tracking-wider mb-2">Upgrade {terms.ligatures}</h3>
                                         <div className="space-y-2">
                                             {inventory.ligatures.map((lig, index) => {
-                                                if (lig.level >= 10) {
-                                                    return (
-                                                        <div key={index} className="flex items-center justify-between p-3 bg-slate-800/40 border border-purple-600/30 rounded-lg">
-                                                            <div className="flex items-center gap-3">
-                                                                <div className="w-10 h-10 rounded bg-purple-900/30 border border-purple-600/50 flex items-center justify-center text-xl">
-                                                                    ⭐
-                                                                </div>
-                                                                <div>
-                                                                    <span className="font-bold text-purple-400">{localizeItemName(getLigatureData(lig.id).name, playerClass)}</span>
-                                                                    <span className="text-xs text-yellow-400 ml-2">(MAX LEVEL 10)</span>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    );
-                                                }
-
-                                                const nextLevel = lig.level + 1;
-                                                const recipe = ALL_RECIPES.find(r => r.id === `ligature_${lig.id}_upgrade_${nextLevel}`);
-                                                if (!recipe) return null;
-
-                                                const canAfford = recipe.ingredients.every(ing => {
-                                                    const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
-                                                    return have >= ing.quantity;
-                                                });
-
+                                                const data = getLigatureData(lig.id);
+                                                const recipe = ALL_RECIPES.find(r => r.id === `ligature_${lig.id}_upgrade_${lig.level + 1}`);
                                                 return (
-                                                    <div key={index} className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
-                                                        {/* Output Info */}
-                                                        <div className="flex items-center gap-3">
-                                                            <div className="w-10 h-10 rounded bg-blue-900/30 border border-blue-600/50 flex items-center justify-center text-xl">
-                                                                ⬆️
-                                                            </div>
-                                                            <div>
-                                                                <div className="font-bold text-slate-200">
-                                                                    {localizeItemName(getLigatureData(lig.id).name, playerClass)}
-                                                                </div>
-                                                                <div className="text-xs text-blue-400">Lv {lig.level} → Lv {nextLevel}</div>
-                                                            </div>
-                                                        </div>
-
-                                                        {/* Ingredients & Button */}
-                                                        <div className="flex items-center gap-6">
-                                                            <div className="flex flex-col gap-1 text-xs">
-                                                                {recipe.ingredients.map((ing, i) => {
-                                                                    const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
-                                                                    const enough = have >= ing.quantity;
-                                                                    return (
-                                                                        <div key={i} className={`flex items-center gap-1 ${enough ? 'text-slate-400' : 'text-red-400'}`}>
-                                                                            <span>{ing.quantity}x {ITEM_DEFINITIONS[ing.itemId]?.name || ing.itemId}</span>
-                                                                            <span className="opacity-50">({have})</span>
-                                                                        </div>
-                                                                    );
-                                                                })}
-                                                            </div>
-
-                                                            <button
-                                                                onClick={() => upgradeLigature(index)}
-                                                                disabled={!canAfford}
-                                                                className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canAfford
-                                                                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
-                                                                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                                                                    }`}
-                                                            >
-                                                                Upgrade
-                                                            </button>
-                                                        </div>
-                                                    </div>
+                                                    <UpgradeCard
+                                                        key={`lig-up-${index}`}
+                                                        name={localizeItemName(data.name, playerClass)}
+                                                        level={lig.level}
+                                                        rarity={data.rarity}
+                                                        ingredients={recipe?.ingredients || []}
+                                                        inventory={inventory}
+                                                        echoes={echoes}
+                                                        onUpgrade={() => upgradeLigature(index)}
+                                                        colorClass="purple-400"
+                                                    />
                                                 );
                                             })}
                                         </div>
@@ -552,67 +723,25 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                 <div>
                                     <h3 className="text-orange-400 text-xs font-bold uppercase tracking-wider mb-2">Craft New {playerClass === 'viola' ? 'Rosin' : 'Mouthpieces'}</h3>
                                     <div className="space-y-2">
-                                        {MOUTHPIECE_DATA.map((mouthpiece) => {
-                                            const recipe = mouthpiece.recipe;
-
-                                            // Check if can afford
-                                            const canAfford = recipe.every(ing => {
-                                                const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
-                                                return have >= ing.quantity;
-                                            });
-
-                                            const displayName = playerClass === 'viola' ? mouthpiece.violaName : mouthpiece.name;
-                                            const displayDesc = playerClass === 'viola' ? mouthpiece.violaDescription : mouthpiece.description;
-
-                                            return (
-                                                <div key={mouthpiece.id} className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
-                                                    {/* Output Info */}
-                                                    <div className="flex items-center gap-3">
-                                                        <div className="w-10 h-10 rounded bg-orange-900/30 border border-orange-600/50 flex items-center justify-center text-xl">
-                                                            {mouthpiece.id === 'plastic' ? '🎵' : '🎶'}
-                                                        </div>
-                                                        <div>
-                                                            <div className={`font-bold ${getRarityColor(mouthpiece.rarity)}`}>
-                                                                {displayName}
-                                                            </div>
-                                                            <div className="text-xs text-slate-400">{displayDesc}</div>
-                                                            <div className="text-[10px] text-orange-400">
-                                                                {mouthpiece.critFactorPerLevel > 0
-                                                                    ? `+${mouthpiece.critFactorPerLevel} Crit Factor/Lv`
-                                                                    : `+${(mouthpiece.critChancePerLevel * 100).toFixed(0)}% Crit Chance/Lv`}
-                                                            </div>
-                                                        </div>
-                                                    </div>
-
-                                                    {/* Ingredients & Button */}
-                                                    <div className="flex items-center gap-6">
-                                                        <div className="flex flex-col gap-1 text-xs">
-                                                            {recipe.map((ing, i) => {
-                                                                const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
-                                                                const enough = have >= ing.quantity;
-                                                                return (
-                                                                    <div key={i} className={`flex items-center gap-1 ${enough ? 'text-slate-400' : 'text-red-400'}`}>
-                                                                        <span>{ing.quantity}x {ITEM_DEFINITIONS[ing.itemId]?.name || ing.itemId}</span>
-                                                                        <span className="opacity-50">({have})</span>
-                                                                    </div>
-                                                                );
-                                                            })}
-                                                        </div>
-
-                                                        <button
-                                                            onClick={() => craftMouthpiece(mouthpiece.id)}
-                                                            disabled={!canAfford}
-                                                            className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canAfford
-                                                                ? 'bg-orange-600 hover:bg-orange-500 text-white shadow-lg shadow-orange-900/20'
-                                                                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                                                                }`}
-                                                        >
-                                                            Craft
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            );
-                                        })}
+                                        {MOUTHPIECE_DATA.map((mouthpiece) => (
+                                            <RecipeCard
+                                                key={`mp-craft-${mouthpiece.id}`}
+                                                recipe={{
+                                                    id: `mouthpiece_${mouthpiece.id}_craft`,
+                                                    outputId: mouthpiece.id as ItemId,
+                                                    outputQuantity: 1,
+                                                    name: playerClass === 'viola' ? mouthpiece.violaName : mouthpiece.name,
+                                                    description: playerClass === 'viola' ? mouthpiece.violaDescription : mouthpiece.description,
+                                                    ingredients: mouthpiece.recipe,
+                                                    category: 'mouthpieces',
+                                                    rarity: mouthpiece.rarity
+                                                }}
+                                                inventory={inventory}
+                                                echoes={echoes}
+                                                onCraft={() => craftMouthpiece(mouthpiece.id)}
+                                                playerClass={playerClass}
+                                            />
+                                        ))}
                                     </div>
                                 </div>
 
@@ -622,50 +751,177 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                         <h3 className="text-orange-400 text-xs font-bold uppercase tracking-wider mb-2">Upgrade {playerClass === 'viola' ? 'Rosin' : 'Mouthpieces'}</h3>
                                         <div className="space-y-2">
                                             {inventory.mouthpieces.map((mp, index) => {
-                                                if (mp.level >= 10) {
-                                                    const data = getMouthpieceData(mp.id);
-                                                    const displayName = playerClass === 'viola' ? data.violaName : data.name;
+                                                const data = getMouthpieceData(mp.id);
+                                                return (
+                                                    <UpgradeCard
+                                                        key={`mp-up-${index}`}
+                                                        name={playerClass === 'viola' ? data.violaName : data.name}
+                                                        level={mp.level}
+                                                        rarity={data.rarity}
+                                                        ingredients={getMouthpieceUpgradeCost(mp.id, mp.level)}
+                                                        inventory={inventory}
+                                                        echoes={echoes}
+                                                        onUpgrade={() => upgradeMouthpiece(index)}
+                                                        colorClass="orange-400"
+                                                        icon={mp.id === 'plastic' ? '🎵' : '🎶'}
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Cases Sub-Tab */}
+                        {craftingSubTab === 'cases' && (
+                            <div className="space-y-4">
+                                {/* Base Case Crafting */}
+                                <div>
+                                    <h3 className="text-purple-400 text-xs font-bold uppercase tracking-wider mb-2">Craft New Cases</h3>
+                                    <div className="space-y-2">
+                                        {CASE_DATA.map((caseItem) => (
+                                            <RecipeCard
+                                                key={`case-craft-${caseItem.id}`}
+                                                recipe={{
+                                                    id: `case_${caseItem.id}_craft`,
+                                                    outputId: caseItem.id as ItemId,
+                                                    outputQuantity: 1,
+                                                    name: caseItem.name,
+                                                    description: caseItem.description,
+                                                    ingredients: caseItem.recipe,
+                                                    category: 'cases',
+                                                    rarity: caseItem.rarity
+                                                }}
+                                                inventory={inventory}
+                                                echoes={echoes}
+                                                onCraft={() => craftCase(caseItem.id)}
+                                                playerClass={playerClass}
+                                            />
+                                        ))}
+                                    </div>
+                                </div>
+
+                                {/* Case Upgrades */}
+                                {inventory.cases.length > 0 && (
+                                    <div>
+                                        <h3 className="text-purple-400 text-xs font-bold uppercase tracking-wider mb-2">Upgrade Cases</h3>
+                                        <div className="space-y-2">
+                                            {inventory.cases.map((caseItem, index) => {
+                                                const data = getCaseData(caseItem.id);
+                                                return (
+                                                    <UpgradeCard
+                                                        key={`case-up-${index}`}
+                                                        name={data.name}
+                                                        level={caseItem.level}
+                                                        rarity={data.rarity}
+                                                        ingredients={getCaseUpgradeCost(caseItem.id, caseItem.level)}
+                                                        inventory={inventory}
+                                                        echoes={echoes}
+                                                        onUpgrade={() => upgradeCase(index)}
+                                                        colorClass="purple-400"
+                                                        icon="📦"
+                                                    />
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Case Melding */}
+                                {level >= MELD_UNLOCK_LEVEL && inventory.cases.length > 0 && (
+                                    <div>
+                                        <h3 className="text-amber-400 text-xs font-bold uppercase tracking-wider mb-2">🔮 Meld Cases (Lv {MELD_UNLOCK_LEVEL}+)</h3>
+                                        <p className="text-[10px] text-slate-500 mb-2">Meld fragments onto a case to gain a stat bonus. Each case can have one meld type, upgradeable to tier 5.</p>
+                                        <div className="space-y-2">
+                                            {inventory.cases.map((caseItem, index) => {
+                                                const stats = getCaseStats(caseItem.id, caseItem.level);
+                                                const currentTier = caseItem.meldTier || 0;
+                                                const currentMeldType = caseItem.meldType;
+
+                                                // Case has no meld yet - show type selection
+                                                if (currentTier === 0) {
                                                     return (
-                                                        <div key={index} className="flex items-center justify-between p-3 bg-slate-800/40 border border-orange-600/30 rounded-lg">
+                                                        <div key={`meld-${index}`} className="p-3 bg-slate-800/40 border border-amber-600/30 rounded-lg">
+                                                            <div className="flex items-center gap-2 mb-2">
+                                                                <span className="text-lg">📦</span>
+                                                                <span className="font-bold text-slate-200">{stats.name} (Lv {caseItem.level})</span>
+                                                                <span className="text-xs text-amber-400">— Choose Meld Type</span>
+                                                            </div>
+                                                            <div className="grid grid-cols-5 gap-1">
+                                                                {(Object.keys(MELD_TYPE_INFO) as MeldType[]).map((mt) => (
+                                                                    <button
+                                                                        key={mt}
+                                                                        onClick={() => meldCase(index, mt)}
+                                                                        className="p-2 rounded border border-slate-600 bg-slate-800/50 hover:border-amber-500/50 hover:bg-amber-900/20 transition-colors text-center"
+                                                                    >
+                                                                        <div className="text-lg">{MELD_TYPE_INFO[mt].emoji}</div>
+                                                                        <div className="text-[9px] text-slate-300">{MELD_TYPE_INFO[mt].name}</div>
+                                                                        <div className="text-[8px] text-slate-500">{MELD_TYPE_INFO[mt].statName}</div>
+                                                                    </button>
+                                                                ))}
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                // Case is melded
+                                                const meldInfo = MELD_TYPE_INFO[currentMeldType!];
+                                                const currentStats = getMeldStats(currentMeldType!, currentTier);
+
+                                                // Show stat value
+                                                let statLabel = '';
+                                                if (currentTier >= 2) {
+                                                    if (currentStats.defense > 0) statLabel = `+${(currentStats.defense * 100).toFixed(1)}% Defense`;
+                                                    else if (currentStats.selfHeal > 0) statLabel = `+${(currentStats.selfHeal * 100).toFixed(2)}% HP/s`;
+                                                    else if (currentStats.critChance > 0) statLabel = `+${(currentStats.critChance * 100).toFixed(1)}% Crit`;
+                                                    else if (currentStats.impact > 0) statLabel = `+${currentStats.impact} Impact`;
+                                                    else if (currentStats.lifesteal > 0) statLabel = `+${(currentStats.lifesteal * 100).toFixed(2)}% LifeSteal`;
+                                                } else {
+                                                    statLabel = 'No bonus (Tier 1)';
+                                                }
+
+                                                // Max tier
+                                                if (currentTier >= 5) {
+                                                    return (
+                                                        <div key={`meld-${index}`} className="flex items-center justify-between p-3 bg-slate-800/40 border border-amber-600/30 rounded-lg">
                                                             <div className="flex items-center gap-3">
-                                                                <div className="w-10 h-10 rounded bg-orange-900/30 border border-orange-600/50 flex items-center justify-center text-xl">
-                                                                    ⭐
+                                                                <div className="w-10 h-10 rounded bg-amber-900/30 border border-amber-600/50 flex items-center justify-center text-xl">
+                                                                    {meldInfo.emoji}
                                                                 </div>
                                                                 <div>
-                                                                    <span className="font-bold text-orange-400">{displayName}</span>
-                                                                    <span className="text-xs text-yellow-400 ml-2">(MAX LEVEL 10)</span>
+                                                                    <span className="font-bold text-amber-400">{stats.name} — {meldInfo.name} Meld</span>
+                                                                    <span className="text-xs text-yellow-400 ml-2">(MAX TIER 5)</span>
+                                                                    <div className="text-[10px] text-amber-300">{statLabel}</div>
                                                                 </div>
                                                             </div>
                                                         </div>
                                                     );
                                                 }
 
-                                                const nextLevel = mp.level + 1;
-                                                const upgradeCost = getMouthpieceUpgradeCost(mp.id, mp.level);
-                                                const data = getMouthpieceData(mp.id);
-                                                const displayName = playerClass === 'viola' ? data.violaName : data.name;
-
+                                                // Upgradeable
+                                                const nextTier = currentTier + 1;
+                                                const upgradeCost = getMeldTierCost(currentMeldType!, nextTier);
                                                 const canAfford = upgradeCost.every(ing => {
                                                     const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
                                                     return have >= ing.quantity;
                                                 });
 
                                                 return (
-                                                    <div key={index} className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
-                                                        {/* Output Info */}
+                                                    <div key={`meld-${index}`} className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
                                                         <div className="flex items-center gap-3">
-                                                            <div className="w-10 h-10 rounded bg-blue-900/30 border border-blue-600/50 flex items-center justify-center text-xl">
-                                                                ⬆️
+                                                            <div className="w-10 h-10 rounded bg-amber-900/30 border border-amber-600/50 flex items-center justify-center text-xl">
+                                                                {meldInfo.emoji}
                                                             </div>
                                                             <div>
                                                                 <div className="font-bold text-slate-200">
-                                                                    {displayName}
+                                                                    {stats.name} — {meldInfo.name} Meld
                                                                 </div>
-                                                                <div className="text-xs text-blue-400">Lv {mp.level} → Lv {nextLevel}</div>
+                                                                <div className="text-xs text-amber-400">Tier {currentTier} → Tier {nextTier}</div>
+                                                                <div className="text-[10px] text-amber-300">{statLabel}</div>
                                                             </div>
                                                         </div>
 
-                                                        {/* Ingredients & Button */}
                                                         <div className="flex items-center gap-6">
                                                             <div className="flex flex-col gap-1 text-xs">
                                                                 {upgradeCost.map((ing, i) => {
@@ -673,7 +929,7 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                                                     const enough = have >= ing.quantity;
                                                                     return (
                                                                         <div key={i} className={`flex items-center gap-1 ${enough ? 'text-slate-400' : 'text-red-400'}`}>
-                                                                            <span>{ing.quantity}x {ITEM_DEFINITIONS[ing.itemId]?.name || ing.itemId}</span>
+                                                                            <span>{ing.quantity}x {ITEM_DEFINITIONS[ing.itemId as ItemId]?.name || ing.itemId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
                                                                             <span className="opacity-50">({have})</span>
                                                                         </div>
                                                                     );
@@ -681,14 +937,14 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                                             </div>
 
                                                             <button
-                                                                onClick={() => upgradeMouthpiece(index)}
+                                                                onClick={() => meldCase(index, currentMeldType!)}
                                                                 disabled={!canAfford}
                                                                 className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canAfford
-                                                                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
+                                                                    ? 'bg-amber-600 hover:bg-amber-500 text-white shadow-lg shadow-amber-900/20'
                                                                     : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                                                                     }`}
                                                             >
-                                                                Upgrade
+                                                                Meld
                                                             </button>
                                                         </div>
                                                     </div>
@@ -697,15 +953,79 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                         </div>
                                     </div>
                                 )}
+                                {level < MELD_UNLOCK_LEVEL && inventory.cases.length > 0 && (
+                                    <div className="p-3 bg-slate-800/40 border border-slate-700/50 rounded-lg">
+                                        <p className="text-sm text-slate-500">🔮 Case Melding unlocks at <span className="text-amber-400">Level {MELD_UNLOCK_LEVEL}</span></p>
+                                    </div>
+                                )}
                             </div>
                         )}
+
                     </div>
                 );
 
-            default:
-                return null;
+            case 'enchantments':
+                return (
+                    <div className="space-y-4">
+                        <div className="p-4 rounded-lg bg-slate-800/30 border border-slate-700">
+                            <h3 className="text-yellow-500 text-xs font-bold uppercase tracking-wider mb-2">Weapon Enchantments</h3>
+                            <p className="text-sm text-slate-400 mb-4">
+                                Enchantments enhance your weapon with magical properties. You can equip one enchantment from each tier (Common, Infused, Arcane) for a maximum of 3 active enchantments.
+                            </p>
+
+                            {/* Equipped Enchantments Summary */}
+                            <div className="grid grid-cols-3 gap-2 mb-4">
+                                {(['common', 'infused', 'arcane'] as const).map((tier) => {
+                                    const enchant = equippedEnchantments[tier];
+                                    const isUnlocked = isEnchantmentSlotUnlocked(tier);
+                                    return (
+                                        <div key={tier} className={`p-2 rounded border ${enchant ? 'border-green-500 bg-green-900/20' : 'border-slate-700 bg-slate-800/30'}`}>
+                                            <p className="text-[10px] text-slate-500 uppercase">{tier}</p>
+                                            {enchant ? (
+                                                <>
+                                                    <p className={`text-sm font-bold ${getRarityColor(getEnchantmentData(enchant.id, tier).rarity)}`}>
+                                                        {tier === 'common' ? '✨' : tier === 'infused' ? '🔮' : '🌟'} {getEnchantmentData(enchant.id, tier).name}
+                                                    </p>
+                                                    <p className="text-[9px] text-green-400">Equipped</p>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <p className="text-sm text-slate-600">Empty</p>
+                                                    {!isUnlocked && <p className="text-[9px] text-red-400">Lv {ENCHANTMENT_SLOT_LEVELS[tier]} Required</p>}
+                                                </>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+
+                            <button
+                                onClick={() => setShowEnchantmentScreen(true)}
+                                className="w-full py-3 rounded-lg font-bold text-sm uppercase tracking-wider transition-all bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20"
+                            >
+                                ✨ Open Enchantment Menu
+                            </button>
+                        </div>
+                    </div>
+                );
+
+            case 'ability_upgrades':
+                return (
+                    <AbilityUpgradeSubTab
+                        playerClass={playerClass}
+                        onOpenUpgradeScreen={() => setShowAbilityUpgradeScreen(true)}
+                    />
+                );
         }
     };
+
+    if (showEnchantmentScreen) {
+        return <EnchantmentScreen onClose={() => setShowEnchantmentScreen(false)} />;
+    }
+
+    if (showAbilityUpgradeScreen) {
+        return <AbilityUpgradeScreen onClose={() => setShowAbilityUpgradeScreen(false)} />;
+    }
 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm">
@@ -725,7 +1045,7 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
 
                 {/* Tabs */}
                 <div className="flex border-b border-slate-700 flex-shrink-0">
-                    {(['materials', 'reeds', 'accessories', 'crafting'] as const).map((tab) => (
+                    {(['materials', 'accessories', 'crafting', 'enchantments', 'ability_upgrades'] as const).map((tab) => (
                         <button
                             key={tab}
                             onClick={() => { setActiveTab(tab); setHoveredItemId(null); }}
@@ -734,7 +1054,8 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                 : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
                                 }`}
                         >
-                            {tab === 'reeds' ? terms.reeds : tab}
+                            {tab === 'enchantments' ? '✨ Enchant' :
+                                tab === 'ability_upgrades' ? '⬆️ Upgrades' : tab}
                         </button>
                     ))}
                 </div>
@@ -763,8 +1084,8 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                             {/* Stats Info for Reeds */}
                             {displayedItem.category === 'reeds' && (
                                 <div className="text-xs text-yellow-500/80 font-mono">
-                                    CRIT: +{(REED_MULTIPLIERS[displayedItem.id as ReedStrength]?.crit * 100).toFixed(1)}% |
-                                    DEF: +{(REED_MULTIPLIERS[displayedItem.id as ReedStrength]?.def * 100).toFixed(1)}% |
+                                    CRIT: +{((REED_MULTIPLIERS[displayedItem.id as ReedStrength]?.crit || 0) * 100).toFixed(1)}% |
+                                    DEF: +{((REED_MULTIPLIERS[displayedItem.id as ReedStrength]?.def || 0) * 100).toFixed(1)}% |
                                     SPD: +{Math.round(((REED_MULTIPLIERS[displayedItem.id as ReedStrength]?.speed || 1) - 1) * 100)}%
                                 </div>
                             )}
@@ -816,177 +1137,4 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
     );
 }
 
-interface InventorySlotProps {
-    name: string;
-    quantity: number;
-    rarity?: string;
-    description: string;
-    isSelected?: boolean;
-    isEquipped?: boolean;
-    onHover: (hovering: boolean) => void;
-    onClick: () => void;
-}
-
-function InventorySlot({ name, quantity, rarity, description, isSelected, isEquipped, onHover, onClick }: InventorySlotProps) {
-    const rarityColor = getRarityColor(rarity);
-    const borderColor = isSelected ? 'border-yellow-400 shadow-[0_0_10px_rgba(250,204,21,0.3)]' : getRarityBorderColor(rarity);
-    const bgColor = isSelected ? 'bg-slate-800' : getRarityBgColor(rarity);
-
-    return (
-        <div
-            className={`relative p-3 rounded-lg border ${borderColor} ${bgColor} transition-all hover:scale-105 cursor-pointer ${isEquipped ? 'ring-2 ring-green-500 ring-offset-2 ring-offset-slate-900' : ''}`}
-            onMouseEnter={() => onHover(true)}
-            onMouseLeave={() => onHover(false)}
-            onClick={onClick}
-        >
-            {/* Item Icon Placeholder */}
-            <div className="w-12 h-12 mx-auto mb-2 rounded bg-slate-700/50 flex items-center justify-center">
-                <span className="text-2xl">📦</span>
-            </div>
-
-            {/* Item Name */}
-            <p className={`text-xs text-center font-medium truncate ${rarityColor}`}>
-                {name}
-            </p>
-
-            {/* Quantity Badge */}
-            <div className="absolute -top-1 -right-1 bg-slate-900 border border-slate-600 rounded-full px-2 py-0.5 text-xs font-bold text-white">
-                {quantity}
-            </div>
-        </div>
-    );
-}
-
-
-
-interface RecipeCardProps {
-    recipe: Recipe;
-    inventory: any;
-    echoes: number;
-    onCraft: () => void;
-    playerClass: 'bb_clarinet' | 'viola';
-}
-
-function RecipeCard({ recipe, inventory, echoes, onCraft, playerClass }: RecipeCardProps) {
-    const outputItem = ITEM_DEFINITIONS[recipe.outputId];
-
-    // Check can craft
-    let canCraft = true;
-    const ingredientsDisplay = recipe.ingredients.map(ing => {
-        let has = 0;
-        if (ing.itemId === 'echoes') has = echoes;
-        else if (ing.itemId in inventory.materials) has = inventory.materials[ing.itemId];
-        else if (ing.itemId in inventory.reeds) has = inventory.reeds[ing.itemId];
-
-        const sufficient = has >= ing.quantity;
-        if (!sufficient) canCraft = false;
-
-        const def = ITEM_DEFINITIONS[ing.itemId];
-        return { ...ing, name: def ? def.name : ing.itemId, has, sufficient };
-    });
-
-    return (
-        <div className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
-            {/* Output Info */}
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded bg-slate-700/50 flex items-center justify-center text-xl">
-                    🛠️
-                </div>
-                <div>
-                    <div className="font-bold text-slate-200">
-                        {outputItem ? localizeItemName(outputItem.name, playerClass) : recipe.outputId}
-                        <span className="ml-2 text-xs text-slate-400">x{recipe.outputQuantity}</span>
-                    </div>
-                    <div className="text-xs text-slate-400">{localizeItemName(recipe.description || '', playerClass)}</div>
-                </div>
-            </div>
-
-            {/* Ingredients & Button */}
-            <div className="flex items-center gap-6">
-                <div className="flex flex-col gap-1 text-xs">
-                    {ingredientsDisplay.map((ing, idx) => (
-                        <div key={idx} className={`flex items-center gap-1 ${ing.sufficient ? 'text-slate-400' : 'text-red-400'}`}>
-                            <span>{ing.quantity}x {ing.name}</span>
-                            <span className="opacity-50">({ing.has})</span>
-                        </div>
-                    ))}
-                </div>
-
-                <button
-                    onClick={onCraft}
-                    disabled={!canCraft}
-                    className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canCraft
-                        ? 'bg-yellow-600 hover:bg-yellow-500 text-slate-900 shadow-lg shadow-yellow-900/20'
-                        : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        }`}
-                >
-                    Craft
-                </button>
-            </div>
-        </div>
-    );
-}
-
 export default InventoryScreen;
-
-interface DungeonTimeUpgradeCardProps {
-    inventory: any;
-    onUpgrade: () => boolean;
-    getCost: () => { valves: number; heavyValves: number; timeIncrease: number };
-    getCurrentLimit: () => number;
-}
-
-function DungeonTimeUpgradeCard({ inventory, onUpgrade, getCost, getCurrentLimit }: DungeonTimeUpgradeCardProps) {
-    const cost = getCost();
-    const currentLimit = getCurrentLimit();
-
-    // Check if affordable
-    const valves = inventory.materials.valves || 0;
-    const heavyValves = inventory.materials.heavy_valves || 0;
-    const canAfford = valves >= cost.valves && heavyValves >= cost.heavyValves;
-
-    return (
-        <div className="flex items-center justify-between p-3 bg-slate-800/40 border border-yellow-600/30 rounded-lg hover:bg-slate-800/60 transition-colors">
-            {/* Info */}
-            <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded bg-yellow-900/30 border border-yellow-600/50 flex items-center justify-center text-xl text-yellow-500">
-                    ⏱️
-                </div>
-                <div>
-                    <div className="font-bold text-yellow-500">
-                        Dungeon Time Limit
-                        <span className="ml-2 text-xs text-slate-400">{currentLimit}s</span>
-                    </div>
-                    <div className="text-xs text-yellow-500/70">
-                        Increase time by <span className="text-white font-bold">+{cost.timeIncrease}s</span>
-                    </div>
-                </div>
-            </div>
-
-            {/* Cost & Button */}
-            <div className="flex items-center gap-6">
-                <div className="flex flex-col gap-1 text-xs text-right">
-                    <div className={`flex items-center justify-end gap-1 ${valves >= cost.valves ? 'text-slate-400' : 'text-red-400'}`}>
-                        <span>{cost.valves} Valves</span>
-                        <span className="opacity-50">({valves})</span>
-                    </div>
-                    <div className={`flex items-center justify-end gap-1 ${heavyValves >= cost.heavyValves ? 'text-slate-400' : 'text-red-400'}`}>
-                        <span>{cost.heavyValves} Heavy Valves</span>
-                        <span className="opacity-50">({heavyValves})</span>
-                    </div>
-                </div>
-
-                <button
-                    onClick={onUpgrade}
-                    disabled={!canAfford}
-                    className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canAfford
-                        ? 'bg-yellow-600 hover:bg-yellow-500 text-slate-900 shadow-lg shadow-yellow-900/20'
-                        : 'bg-slate-700 text-slate-500 cursor-not-allowed'
-                        }`}
-                >
-                    Upgrade
-                </button>
-            </div>
-        </div>
-    );
-}

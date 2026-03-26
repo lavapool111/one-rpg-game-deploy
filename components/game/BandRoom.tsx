@@ -1,22 +1,19 @@
 'use client';
 
-import { useRef, useMemo, createContext, useContext, useEffect, useState, memo } from 'react';
+import { useRef, useMemo, createContext, useContext, useEffect, memo, forwardRef } from 'react';
 import { useFrame } from '@react-three/fiber';
 import AudioManager from '@/lib/audio/AudioManager';
 import { usePlayerStore } from '@/lib/store'; // Import player store for position tracking
 import {
+    BackSide,
     DoubleSide,
-    Mesh,
     Group,
     SpotLight as ThreeSpotLight,
-    BackSide,
     Shape,
     Path,
-    ExtrudeGeometry,
     Vector3,
     InstancedMesh,
     Object3D,
-    CylinderGeometry,
     MeshStandardMaterial,
     Color,
     Matrix4,
@@ -52,12 +49,14 @@ interface BandRoomProps {
     animatedLights?: boolean;
     /** Quality setting for optimization */
     quality?: 'low' | 'normal' | 'high';
+    /** Disable ambient background audio */
+    disableAudio?: boolean;
     /** Children components that need pillar data */
     children?: React.ReactNode;
 }
 
 // Spotlight configuration (optimized for performance)
-const SPOTLIGHT_COUNT = 8;
+const SPOTLIGHT_COUNT = 0; // Disabled: rendering 8 animated spotlights on PBR instanced meshes tanks FPS
 const SPOTLIGHT_INTENSITY = 400; // Reduced from 800 for performance
 const SPOTLIGHT_ANGLE = Math.PI / 6;
 const SPOTLIGHT_COLOR = '#fff5e6';
@@ -71,12 +70,15 @@ export function BandRoom({
     wallHeight = DEFAULT_WALL_HEIGHT,
     animatedLights = true,
     quality = 'normal',
+    disableAudio = false,
     children,
 }: BandRoomProps) {
     const spotlightRefs = useRef<ThreeSpotLight[]>([]);
 
     // Audio: Background Ambience
     useEffect(() => {
+        if (disableAudio) return; // Skip audio if disabled
+
         // Load and play the ambient music
         const soundKey = 'bg-ambience';
         const sfxPath = '/audio/ambient-music.m4a';
@@ -95,7 +97,7 @@ export function BandRoom({
         return () => {
             if (id) AudioManager.stop(soundKey, id);
         };
-    }, []);
+    }, [disableAudio]);
 
     // Generate pillar configuration
     const pillarConfig = useMemo(() => generatePillars(radius), [radius]);
@@ -119,16 +121,27 @@ export function BandRoom({
     // Reusable vectors (avoid allocations every frame)
     const cameraDir = useRef(new Vector3());
     const toSpot = useRef(new Vector3());
+    const spotFrameCount = useRef(0);
+    const spotShadowFrameCount = useRef(0);
 
     // Animate spotlights with view-based culling
     useFrame((state) => {
         if (!animatedLights && spotlightRefs.current.length === 0) return;
 
+        // Throttle spotlight animation to every 2nd frame (slow sine wave, imperceptible)
+        spotFrameCount.current++;
+        const isUpdateFrame = spotFrameCount.current % 2 === 0;
+
+        // Throttle shadow map updates to every 4th frame
+        spotShadowFrameCount.current++;
+        const isShadowFrame = spotShadowFrameCount.current % 5 === 0;
+
         // Check if player is in the main arena (culling optimization) - use squared distance
         const playerPos = usePlayerStore.getState().position;
         const distFromCenterSq = playerPos[0] * playerPos[0] + playerPos[2] * playerPos[2];
-        const arenaThresholdSq = (radius + 150) * (radius + 150);
-        const isInArena = distFromCenterSq < arenaThresholdSq;
+        const arenaThresholdSq = radius * radius;
+        const isInArenaInner = distFromCenterSq < (radius - 25) * (radius - 25);
+        const isInArenaOuter = distFromCenterSq < (radius + 150) * (radius + 150);
 
         // Get camera direction for view-based culling
         state.camera.getWorldDirection(cameraDir.current);
@@ -140,7 +153,13 @@ export function BandRoom({
             if (!spotlight) return;
 
             // Visibility culling (every frame for responsive turning)
-            if (!isInArena) {
+            if (!isInArenaOuter) {
+                spotlight.visible = false;
+                return;
+            }
+
+            // Optimization: Hide arena spotlights if player is deep in a corridor
+            if (!isInArenaInner) {
                 spotlight.visible = false;
                 return;
             }
@@ -158,7 +177,13 @@ export function BandRoom({
 
             if (!spotlight.visible) return;
 
-            // Movement logic (runs every frame for smooth animation)
+            // Throttle shadow needsUpdate for shadow-casting lights
+            if (spotlight.castShadow && isShadowFrame) {
+                spotlight.shadow.needsUpdate = true;
+            }
+
+            // Movement logic (throttled to every 2nd frame)
+            if (!isUpdateFrame) return;
             const offset = (i / SPOTLIGHT_COUNT) * Math.PI * 2;
             spotlight.target.position.x = Math.sin(time * 0.5 + offset) * (radius * 0.4);
             spotlight.target.position.z = Math.cos(time * 0.3 + offset) * (radius * 0.4);
@@ -169,17 +194,12 @@ export function BandRoom({
     return (
         <PillarContext.Provider value={pillarConfig}>
             <group>
-                {/* Ambient lighting for base illumination */}
-                <ambientLight intensity={0.15} color="#ffd9b3" />
+                {/* Ambient lighting for base illumination - very subtle for mood */}
+                <ambientLight intensity={0.4} color="#ecb987" />
 
-                {/* Main warm overhead light (reduced intensity for performance) */}
-                <pointLight
-                    position={[0, wallHeight - 10, 0]}
-                    intensity={300}
-                    color="#fff0d9"
-                    distance={radius * 1.5}
-                    decay={2}
-                />
+                {/* Main warm overhead light - constrained distance and intensity */}
+                {/* We'll use a local component for this to handle its own visibility culling */}
+                <ArenaMainLight radius={radius} wallHeight={wallHeight} />
 
                 {/* Floor - Polished Hardwood */}
                 <HardwoodFloor radius={radius} />
@@ -224,6 +244,16 @@ const PILLAR_BASE_MATERIAL = new MeshStandardMaterial({ color: new Color('#8B735
 const PILLAR_SHAFT_MATERIAL = new MeshStandardMaterial({ color: new Color('#CD853F'), roughness: 0.35, metalness: 0.25 });
 const PILLAR_CAPITAL_MATERIAL = new MeshStandardMaterial({ color: new Color('#DAA520'), roughness: 0.3, metalness: 0.5 });
 
+// Shared corridor materials (created once, reused across all 4 corridors)
+const CORRIDOR_BRONZE_MATERIAL = new MeshStandardMaterial({ color: new Color('#CD7F32'), roughness: 0.4, metalness: 0.6 });
+const CORRIDOR_BRONZE_DS_MATERIAL = new MeshStandardMaterial({ color: new Color('#CD7F32'), roughness: 0.5, metalness: 0.4, side: BackSide });
+const CORRIDOR_FLOOR_MATERIAL = new MeshStandardMaterial({ color: new Color('#8B4513'), roughness: 0.3, metalness: 0.1 });
+const CORRIDOR_GOLD_MATERIAL = new MeshStandardMaterial({ color: new Color('#DAA520'), roughness: 0.3, metalness: 0.7 });
+const CORRIDOR_GOLD_EMISSIVE_MATERIAL = new MeshStandardMaterial({ color: new Color('#DAA520'), roughness: 0.3, metalness: 0.7, emissive: new Color('#DAA520'), emissiveIntensity: 0.1 });
+const CORRIDOR_STONE_MATERIAL = new MeshStandardMaterial({ color: new Color('#6B6B6B'), roughness: 0.95, metalness: 0.0 });
+const CORRIDOR_STONE_DS_MATERIAL = new MeshStandardMaterial({ color: new Color('#6B6B6B'), roughness: 0.95, metalness: 0.0, side: BackSide });
+const CORRIDOR_ARCH_PILLAR_MATERIAL = new MeshStandardMaterial({ color: new Color('#8B4513'), roughness: 0.3, metalness: 0.1 });
+
 /**
  * Instanced Pillars Component
  * Uses GPU instancing to render all pillars efficiently (9 draw calls instead of 126)
@@ -234,7 +264,7 @@ const InstancedPillars = memo(function InstancedPillars({ pillars }: { pillars: 
     const capitalRef = useRef<InstancedMesh>(null);
 
     // Pre-compute geometries for each ring (they have different sizes)
-    const ringGeometries = useMemo(() => {
+    const _ringGeometries = useMemo(() => {
         // Group pillars by ring (they have consistent sizes per ring)
         const ring1 = pillars.filter(p => p.id.startsWith('ring1'));
         const ring2 = pillars.filter(p => p.id.startsWith('ring2'));
@@ -251,7 +281,7 @@ const InstancedPillars = memo(function InstancedPillars({ pillars }: { pillars: 
     useEffect(() => {
         if (!baseRef.current || !shaftRef.current || !capitalRef.current) return;
 
-        const tempMatrix = new Matrix4();
+        const _tempMatrix = new Matrix4();
         const tempObject = new Object3D();
 
         pillars.forEach((pillar, i) => {
@@ -381,6 +411,7 @@ function EntranceSpandrel({ width, height, archRadius }: { width: number, height
                 color="#CD7F32"
                 roughness={0.4}
                 metalness={0.6}
+                side={BackSide}
             />
         </mesh>
     );
@@ -437,10 +468,10 @@ function BronzeWalls({ radius, height }: { radius: number; height: number }) {
                         args={[radius, radius, height, 32, 1, true, seg.thetaStart, seg.thetaLength]}
                     />
                     <meshStandardMaterial
-                        color="#CD7F32"
+                        color="#3f4e5a"
                         roughness={0.4}
                         metalness={0.6}
-                        side={DoubleSide}
+                        side={BackSide}
                     />
                 </mesh>
             ))}
@@ -455,7 +486,7 @@ function BronzeWalls({ radius, height }: { radius: number; height: number }) {
                         color="#CD7F32"
                         roughness={0.4}
                         metalness={0.6}
-                        side={DoubleSide}
+                        side={BackSide}
                     />
                 </mesh>
             ))}
@@ -463,13 +494,41 @@ function BronzeWalls({ radius, height }: { radius: number; height: number }) {
     );
 }
 
+const ArenaMainLight = memo(function ArenaMainLight({ radius, wallHeight }: { radius: number, wallHeight: number }) {
+    const lightRef = useRef<any>(null);
+    const frameCount = useRef(0);
+
+    useFrame(() => {
+        if (!lightRef.current) return;
+        frameCount.current++;
+        if (frameCount.current % 10 !== 0) return;
+
+        const playerPos = usePlayerStore.getState().position;
+        const distSq = playerPos[0] * playerPos[0] + playerPos[2] * playerPos[2];
+
+        // Hide light if player is deep in a corridor (e.g., 25m past the entrance)
+        lightRef.current.visible = distSq < (radius + 25) * (radius + 25);
+    });
+
+    return (
+        <pointLight
+            ref={lightRef}
+            position={[0, wallHeight - 10, 0]}
+            intensity={1800} // Reverted to normal physically correct intensity
+            color="#c9a97a"
+            distance={radius * 1.2} // Hard cutoff to prevent shader calculation across the entire map
+            decay={2} // Reverted to inverse-square physical decay so it doesn't wash out the room
+        />
+    );
+});
+
 /**
  * Domed Ceiling with structural beams
  */
 function DomeCeiling({ radius, height }: { radius: number; height: number }) {
     // Radial beam count
     const beamCount = 16;
-    const beams = useMemo(() => {
+    const _beams = useMemo(() => {
         const positions: number[] = [];
         for (let i = 0; i < beamCount; i++) {
             positions.push((i / beamCount) * Math.PI * 2);
@@ -485,10 +544,8 @@ function DomeCeiling({ radius, height }: { radius: number; height: number }) {
             {/* Main dome */}
             <mesh>
                 <sphereGeometry args={[radius, 16, 8, 0, Math.PI * 2, 0, Math.PI / 2]} />
-                <meshStandardMaterial
+                <meshBasicMaterial
                     color="#1a1a2e"
-                    roughness={0.8}
-                    metalness={0.1}
                     side={DoubleSide}
                 />
             </mesh>
@@ -598,190 +655,204 @@ function BranchingPaths({ arenaRadius, wallHeight }: BranchingPathsProps) {
 
     return (
         <group>
-            {corridors.map((corridor) => {
-                // Position the corridor so it starts inside the arena (overlaps for seamless connection)
-                // Reduced overlap to prevents geometry protruding into the arena (which causes black artifacts)
-                // Just enough to Clip into the wall (1m)
-                const overlapIntoArena = 1;
-                const offsetX = Math.sin(corridor.angle) * (arenaRadius + corridorLength / 2 - overlapIntoArena);
-                const offsetZ = Math.cos(corridor.angle) * (arenaRadius + corridorLength / 2 - overlapIntoArena);
-
-                return (
-                    <group
-                        key={corridor.name}
-                        position={[offsetX, 0, offsetZ]}
-                        rotation={[0, corridor.angle, 0]}
-                    >
-                        {/* Floor */}
-                        <mesh
-                            rotation={[-Math.PI / 2, 0, 0]}
-                            position={[0, 0.01, 0]}
-                            receiveShadow
-                        >
-                            <planeGeometry args={[corridorWidth, corridorLength]} />
-                            <meshStandardMaterial
-                                color="#8B4513"
-                                roughness={0.3}
-                                metalness={0.1}
-                            />
-                        </mesh>
-
-                        {/* Left Wall - Match Band Room Bronze */}
-                        <mesh position={[-corridorWidth / 2 - 0.5, corridorHeight / 2, 0]}>
-                            <boxGeometry args={[1, corridorHeight, corridorLength]} />
-                            <meshStandardMaterial
-                                color="#CD7F32"
-                                roughness={0.4}
-                                metalness={0.6}
-                            />
-                        </mesh>
-
-                        {/* Right Wall - Match Band Room Bronze */}
-                        <mesh position={[corridorWidth / 2 + 0.5, corridorHeight / 2, 0]}>
-                            <boxGeometry args={[1, corridorHeight, corridorLength]} />
-                            <meshStandardMaterial
-                                color="#CD7F32"
-                                roughness={0.4}
-                                metalness={0.6}
-                            />
-                        </mesh>
-
-                        <mesh position={[0, corridorHeight, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                            <cylinderGeometry
-                                args={[corridorWidth / 2, corridorWidth / 2, corridorLength, 32, 1, true, Math.PI / 2, Math.PI]}
-                            />
-                            <meshStandardMaterial
-                                color="#CD7F32"  // Bronze to match walls
-                                roughness={0.5}
-                                metalness={0.4}
-                                side={DoubleSide}
-                            />
-                        </mesh>
-
-                        {/* End Wall - Natural Stone appearance OR Dungeon Door for south */}
-                        {corridor.name === 'south' ? (
-                            <group position={[0, 0, corridorLength / 2 - 5]}>
-                                <DungeonDoor
-                                    position={[0, 0, 0]}
-                                    rotation={Math.PI}
-                                />
-                            </group>
-                        ) : (
-                            <group position={[0, 0, corridorLength / 2]}>
-                                {/* Main stone wall base */}
-                                <mesh position={[0, corridorHeight / 2, 0]}>
-                                    <boxGeometry args={[corridorWidth, corridorHeight, 2]} />
-                                    <meshStandardMaterial
-                                        color="#6B6B6B"
-                                        roughness={0.95}
-                                        metalness={0.0}
-                                    />
-                                </mesh>
-                                {/* Stone wall arch cap to fill ceiling gap */}
-                                <mesh position={[0, corridorHeight, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                                    <cylinderGeometry args={[corridorWidth / 2, corridorWidth / 2, 2, 32, 1, false, Math.PI / 2, Math.PI]} />
-                                    <meshStandardMaterial
-                                        color="#6B6B6B"
-                                        roughness={0.95}
-                                        metalness={0.0}
-                                        side={DoubleSide}
-                                    />
-                                </mesh>
-                            </group>
-                        )}
-
-                        {/* Archway frame at entrance */}
-                        <group position={[0, 0, -corridorLength / 2 + 2]}>
-                            {/* Left pillar */}
-                            <mesh position={[-corridorWidth / 2 - 1.5, (corridorHeight - 2) / 2, 0]}>
-                                <boxGeometry args={[2, corridorHeight - 2, 2]} />
-                                <meshStandardMaterial
-                                    color="#DAA520"
-                                    roughness={0.3}
-                                    metalness={0.7}
-                                />
-                            </mesh>
-                            {/* Right pillar */}
-                            <mesh position={[corridorWidth / 2 + 1.5, (corridorHeight - 2) / 2, 0]}>
-                                <boxGeometry args={[2, corridorHeight - 2, 2]} />
-                                <meshStandardMaterial
-                                    color="#DAA520"
-                                    roughness={0.3}
-                                    metalness={0.7}
-                                />
-                            </mesh>
-
-                            {/* Spandrel to fill arch gap (Spans from 12.5 to 17.5) */}
-                            {/* Frame is at -Length/2 + 2. We want Spandrel at -Length/2 (Flush with wall). */}
-                            {/* So relative Z is -2. */}
-                            <group position={[0, 0, -2]}>
-                                <EntranceSpandrel width={15} height={5} archRadius={4.8} />
-                            </group>
-
-                            {/* Top beam */}
-                            <mesh position={[0, corridorHeight - 1, 0]}>
-                                <boxGeometry args={[corridorWidth + 6, 2, 2]} />
-                                <meshStandardMaterial
-                                    color="#DAA520"
-                                    roughness={0.3}
-                                    metalness={0.7}
-                                    emissive="#DAA520"
-                                    emissiveIntensity={0.1}
-                                />
-                            </mesh>
-                        </group>
-
-                        {/* Interior arches along the corridor */}
-                        {Array.from({ length: archCount }).map((_, i) => {
-                            const archZ = -corridorLength / 2 + archSpacing * (i + 1) + 15;
-                            return (
-                                <group key={`arch-${i}`} position={[0, 0, archZ]}>
-                                    {/* Left pillar */}
-                                    <mesh position={[-corridorWidth / 2 + 0.5, corridorHeight / 2, 0]}>
-                                        <boxGeometry args={[1, corridorHeight, 1]} />
-                                        <meshStandardMaterial
-                                            color="#8B4513"
-                                            roughness={0.3}
-                                            metalness={0.1}
-                                        />
-                                    </mesh>
-                                    {/* Right pillar */}
-                                    <mesh position={[corridorWidth / 2 - 0.5, corridorHeight / 2, 0]}>
-                                        <boxGeometry args={[1, corridorHeight, 1]} />
-                                        <meshStandardMaterial
-                                            color="#8B4513"
-                                            roughness={0.3}
-                                            metalness={0.1}
-                                        />
-                                    </mesh>
-                                    {/* Arched connection */}
-                                    <mesh position={[0, corridorHeight - 1, 0]} rotation={[0, 0, 0]}>
-                                        {/* Use a torus segment or similar for a nice arch, or just a simple beam for now */}
-                                        {/* Let's try a curved tube/torus section for the arch */}
-                                        <torusGeometry args={[corridorWidth / 2 - 0.5, 0.4, 8, 16, Math.PI]} />
-                                        <meshStandardMaterial
-                                            color="#CD7F32"
-                                            roughness={0.4}
-                                            metalness={0.6}
-                                        />
-                                    </mesh>
-                                </group>
-                            );
-                        })}
-
-                        {/* Corridor lighting - 3 lights with visibility culling */}
-                        <CorridorLights
-                            corridorAngle={corridor.angle}
-                            corridorLength={corridorLength}
-                            corridorHeight={corridorHeight}
-                            arenaRadius={arenaRadius}
-                        />
-                    </group>
-                );
-            })}
+            {corridors.map((corridor) => (
+                <Corridor
+                    key={corridor.name}
+                    name={corridor.name}
+                    angle={corridor.angle}
+                    arenaRadius={arenaRadius}
+                    corridorWidth={corridorWidth}
+                    corridorLength={corridorLength}
+                    corridorHeight={corridorHeight}
+                    archCount={archCount}
+                    archSpacing={archSpacing}
+                />
+            ))}
         </group>
     );
 }
+
+// Sub-component for a single corridor to handle its own visibility culling
+const Corridor = memo(function Corridor({
+    name,
+    angle,
+    arenaRadius,
+    corridorWidth,
+    corridorLength,
+    corridorHeight,
+    archCount,
+    archSpacing,
+}: {
+    name: string;
+    angle: number;
+    arenaRadius: number;
+    corridorWidth: number;
+    corridorLength: number;
+    corridorHeight: number;
+    archCount: number;
+    archSpacing: number;
+}) {
+    const groupRef = useRef<Group>(null);
+    const frameCount = useRef(0);
+
+    // Position the corridor so it starts inside the arena (overlaps for seamless connection)
+    const overlapIntoArena = 1;
+    const offsetX = Math.sin(angle) * (arenaRadius + corridorLength / 2 - overlapIntoArena);
+    const offsetZ = Math.cos(angle) * (arenaRadius + corridorLength / 2 - overlapIntoArena);
+
+    // Pre-compute constant values for culling
+    const corridorData = useMemo(() => ({
+        entranceX: Math.sin(angle) * arenaRadius,
+        entranceZ: Math.cos(angle) * arenaRadius,
+        dirX: Math.sin(angle),
+        dirZ: Math.cos(angle),
+    }), [angle, arenaRadius]);
+
+    useFrame(() => {
+        if (!groupRef.current) return;
+
+        // Throttle check to every 15 frames
+        frameCount.current++;
+        if (frameCount.current % 15 !== 0) return;
+
+        const playerPos = usePlayerStore.getState().position;
+        const [px, , pz] = playerPos;
+
+        const toPlayerX = px - corridorData.entranceX;
+        const toPlayerZ = pz - corridorData.entranceZ;
+        const distanceAlongCorridor = toPlayerX * corridorData.dirX + toPlayerZ * corridorData.dirZ;
+
+        // Visual check: show if player is near or inside the corridor
+        // Increased backward buffer (-400) to ensure entrances are visible from across the arena
+        const exitBuffer = name === 'north' ? corridorLength + 100 : corridorLength + 50;
+        groupRef.current.visible = distanceAlongCorridor > -400 && distanceAlongCorridor < exitBuffer;
+    });
+
+    return (
+        <group
+            ref={groupRef}
+            position={[offsetX, 0, offsetZ]}
+            rotation={[0, angle, 0]}
+        >
+            {/* Floor */}
+            <mesh
+                rotation={[-Math.PI / 2, 0, 0]}
+                position={[0, 0.01, 0]}
+                receiveShadow
+            >
+                <planeGeometry args={[corridorWidth, corridorLength]} />
+                <primitive object={CORRIDOR_FLOOR_MATERIAL} attach="material" />
+            </mesh>
+
+            {/* Left Wall - Match Band Room Bronze */}
+            <mesh position={[-corridorWidth / 2 - 0.5, corridorHeight / 2, 0]}>
+                <boxGeometry args={[1, corridorHeight, corridorLength]} />
+                <primitive object={CORRIDOR_BRONZE_MATERIAL} attach="material" />
+            </mesh>
+
+            {/* Right Wall - Match Band Room Bronze */}
+            <mesh position={[corridorWidth / 2 + 0.5, corridorHeight / 2, 0]}>
+                <boxGeometry args={[1, corridorHeight, corridorLength]} />
+                <primitive object={CORRIDOR_BRONZE_MATERIAL} attach="material" />
+            </mesh>
+
+            {/* Ceiling */}
+            <mesh position={[0, corridorHeight, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                <cylinderGeometry
+                    args={[corridorWidth / 2, corridorWidth / 2, corridorLength, 32, 1, true, Math.PI / 2, Math.PI]}
+                />
+                <primitive object={CORRIDOR_BRONZE_DS_MATERIAL} attach="material" />
+            </mesh>
+
+            {/* End Wall or Open (north → AltarRoom) */}
+            {
+                name === 'south' ? (
+                    <group position={[0, 0, corridorLength / 2 - 5]}>
+                        <DungeonDoor
+                            position={[0, 0, 0]}
+                            rotation={Math.PI}
+                        />
+                    </group>
+                ) : name === 'north' ? (
+                    null /* Open — leads to AltarRoom */
+                ) : (
+                    <group position={[0, 0, corridorLength / 2]}>
+                        {/* Main stone wall base */}
+                        <mesh position={[0, corridorHeight / 2, 0]}>
+                            <boxGeometry args={[corridorWidth, corridorHeight, 2]} />
+                            <primitive object={CORRIDOR_STONE_MATERIAL} attach="material" />
+                        </mesh>
+                        {/* Stone wall arch cap to fill ceiling gap */}
+                        <mesh position={[0, corridorHeight, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                            <cylinderGeometry args={[corridorWidth / 2, corridorWidth / 2, 2, 32, 1, false, Math.PI / 2, Math.PI]} />
+                            <primitive object={CORRIDOR_STONE_DS_MATERIAL} attach="material" />
+                        </mesh>
+                    </group>
+                )
+            }
+
+            {/* Archway frame at entrance */}
+            <group position={[0, 0, -corridorLength / 2 + 2]}>
+                {/* Left pillar */}
+                <mesh position={[-corridorWidth / 2 - 1.5, (corridorHeight - 2) / 2, 0]}>
+                    <boxGeometry args={[2, corridorHeight - 2, 2]} />
+                    <primitive object={CORRIDOR_GOLD_MATERIAL} attach="material" />
+                </mesh>
+                {/* Right pillar */}
+                <mesh position={[corridorWidth / 2 + 1.5, (corridorHeight - 2) / 2, 0]}>
+                    <boxGeometry args={[2, corridorHeight - 2, 2]} />
+                    <primitive object={CORRIDOR_GOLD_MATERIAL} attach="material" />
+                </mesh>
+
+                {/* Spandrel to fill arch gap */}
+                <group position={[0, 0, -2]}>
+                    <EntranceSpandrel width={15} height={5} archRadius={4.8} />
+                </group>
+
+                {/* Top beam */}
+                <mesh position={[0, corridorHeight - 1, 0]}>
+                    <boxGeometry args={[corridorWidth + 6, 2, 2]} />
+                    <primitive object={CORRIDOR_GOLD_EMISSIVE_MATERIAL} attach="material" />
+                </mesh>
+            </group>
+
+            {/* Interior arches along the corridor */}
+            {
+                Array.from({ length: archCount }).map((_, i) => {
+                    const archZ = -corridorLength / 2 + archSpacing * (i + 1) + 15;
+                    return (
+                        <group key={`arch-${i}`} position={[0, 0, archZ]}>
+                            {/* Left pillar */}
+                            <mesh position={[-corridorWidth / 2 + 0.5, corridorHeight / 2, 0]}>
+                                <boxGeometry args={[1, corridorHeight, 1]} />
+                                <primitive object={CORRIDOR_ARCH_PILLAR_MATERIAL} attach="material" />
+                            </mesh>
+                            {/* Right pillar */}
+                            <mesh position={[corridorWidth / 2 - 0.5, corridorHeight / 2, 0]}>
+                                <boxGeometry args={[1, corridorHeight, 1]} />
+                                <primitive object={CORRIDOR_ARCH_PILLAR_MATERIAL} attach="material" />
+                            </mesh>
+                            {/* Arched connection */}
+                            <mesh position={[0, corridorHeight - 1, 0]} rotation={[0, 0, 0]}>
+                                <torusGeometry args={[corridorWidth / 2 - 0.5, 0.4, 8, 16, Math.PI]} />
+                                <primitive object={CORRIDOR_BRONZE_MATERIAL} attach="material" />
+                            </mesh>
+                        </group>
+                    );
+                })
+            }
+
+            {/* Corridor lighting */}
+            <CorridorLights
+                corridorAngle={angle}
+                corridorLength={corridorLength}
+                corridorHeight={corridorHeight}
+                arenaRadius={arenaRadius}
+            />
+        </group >
+    );
+});
+
 
 // Sub-component for corridor lights to handle own visibility updates
 const CorridorLights = memo(function CorridorLights({
@@ -809,9 +880,10 @@ const CorridorLights = memo(function CorridorLights({
     useFrame(() => {
         if (!groupRef.current) return;
 
-        // Throttle visibility check to every 6 frames
+        // Throttle visibility check to every 15 frames (corridors are far enough that
+        // slightly delayed culling is imperceptible)
         frameCount.current++;
-        if (frameCount.current % 6 !== 0) return;
+        if (frameCount.current % 15 !== 0) return;
 
         const playerPos = usePlayerStore.getState().position;
         const [px, , pz] = playerPos;
@@ -821,32 +893,38 @@ const CorridorLights = memo(function CorridorLights({
         const toPlayerZ = pz - corridorData.entranceZ;
         const distanceAlongCorridor = toPlayerX * corridorData.dirX + toPlayerZ * corridorData.dirZ;
 
-        groupRef.current.visible = distanceAlongCorridor > -50 && distanceAlongCorridor < corridorLength + 50;
+        // Optimization: Cull lights more aggressively than geometry
+        // For the North corridor (angle ~ 0, dirZ ~ 1), cut off exactly at the end to avoid overlapping with AltarRoom lights
+        const isNorth = Math.abs(corridorData.dirZ - 1) < 0.01;
+        const exitBuffer = isNorth ? corridorLength : corridorLength + 50;
+
+        groupRef.current.visible = distanceAlongCorridor > -100 && distanceAlongCorridor < exitBuffer;
     });
 
     return (
         <group ref={groupRef}>
+            {/* Main corridor illumination - dimmed for atmosphere and performance */}
             <pointLight
                 position={[0, corridorHeight - 2, -corridorLength / 4]}
-                intensity={100}
-                color="#fff0d9"
-                distance={corridorLength / 2}
+                intensity={15}
+                color="#ffaa66"
+                distance={corridorLength / 2.5}
                 decay={2}
             />
             <pointLight
                 position={[0, corridorHeight - 2, corridorLength / 4]}
-                intensity={100}
-                color="#fff0d9"
-                distance={corridorLength / 2}
+                intensity={15}
+                color="#ffaa66"
+                distance={corridorLength / 2.5}
                 decay={2}
             />
             {/* Light at the end to illuminate stone wall */}
             <pointLight
                 position={[0, corridorHeight - 2, corridorLength / 2 - 5]}
-                intensity={150}
-                color="#ffeedd"
-                distance={40}
-                decay={1.5}
+                intensity={25}
+                color="#ffaa66"
+                distance={30}
+                decay={2}
             />
         </group>
     );
@@ -860,8 +938,6 @@ interface SpotlightProps {
     target: [number, number, number];
     castShadow?: boolean;
 }
-
-import { forwardRef } from 'react';
 
 const SpotlightComponent = forwardRef<ThreeSpotLight, SpotlightProps>(
     function SpotlightComponent({ position, target, castShadow = true }, ref) {

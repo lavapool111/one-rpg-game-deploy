@@ -4,45 +4,34 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { useGameStore } from "./gameStore";
 import { getStatsForLevel, getXpRequiredForLevel } from "../game/stats";
-import { Inventory, INITIAL_INVENTORY, MaterialItemId, ReedStrength, REED_MULTIPLIERS, ALL_RECIPES, LigatureInstance, LigatureId, getLigatureStats, getLigatureData, LIGATURE_DATA, MouthpieceInstance, MouthpieceId, getMouthpieceStats, getMouthpieceData, getMouthpieceUpgradeCost } from "../game/inventory";
+import {
+  Inventory,
+  getInitialInventory,
+  MaterialItemId,
+  ReedStrength,
+  LigatureInstance,
+  MouthpieceInstance,
+  CaseInstance,
+  EnchantmentInstance,
+  EnchantmentTier,
+  getMouthpieceStats,
+  MeldStatBonus,
+} from "../game/inventory";
+import { AbilityUpgrades, AbilityUpgradePath, calculateAbilityUpgradeStats, ABILITY_UPGRADES_UNLOCK_LEVEL, ABILITY_UPGRADES_TIER_1, ABILITY_UPGRADES_TIER_2, ABILITY_UPGRADES_TIER_2_UNLOCK_LEVEL } from "../game/abilityUpgrades";
 import AudioManager from "../audio/AudioManager";
 import { GAME_CONFIG } from "../game/config";
 
+// Re-export shared helpers from accessoryStore so existing imports still work
+export { SLOT_BONUSES, getSlotMultiplier, calculateStats } from "./accessoryStore";
+
 const DEATH_SOUND_KEY = 'player-death';
-const DEATH_SOUND_SRC = '/audio/cymbal-crash-412547 1.mp3';
-
-// Stat Calculation with new Reed Stats
-// Embouchure grants +2% crit chance per level past 1
-function calculateStats(level: number, reed: ReedStrength | null, embouchure: number = 1) {
-  const base = getStatsForLevel(level);
-  const baseSpeed = 4.5;
-  const embouchureCritBonus = (embouchure - 1) * 0.02; // 2% per level past 1
-
-  if (!reed) {
-    return {
-      ...base,
-      speed: baseSpeed,
-      basicAttackDamage: base.damage,
-      critChance: embouchureCritBonus,
-      defense: 0
-    };
-  }
-
-  const stats = REED_MULTIPLIERS[reed];
-
-  return {
-    health: base.health, // Reeds no longer scale HP
-    damage: base.damage, // Reeds no longer scale Damage
-    basicAttackDamage: base.damage,
-    speed: Number((baseSpeed * stats.speed).toFixed(2)),
-    critChance: stats.crit + embouchureCritBonus, // Reed crit + embouchure bonus
-    defense: stats.def
-  };
-}
+const DEATH_SOUND_SRC = '/audio/cymbal-crash-412547%201.mp3';
 
 /**
  * Player Store
- * State management for the player character
+ * Core player state: stats, combat, class, abilities, position, movement.
+ * Equipment/accessories are in accessoryStore.
+ * Inventory/materials are in inventoryStore.
  */
 
 // Player Class Types
@@ -75,12 +64,12 @@ export const CLASS_INFO: Record<PlayerClass, { name: string; icon: string; descr
 
 // Class-based terminology helper
 export interface ClassTerms {
-  embouchure: string;  // Embouchure (Clarinet) or Posture (Viola)
-  reed: string;        // Reed (Clarinet) or String (Viola)
-  reeds: string;       // Reeds (Clarinet) or Strings (Viola)
-  reedStrength: string; // Reed Strength (Clarinet) or String Gauge (Viola)
-  ligature: string;    // Ligature (Clarinet) or Bow (Viola)
-  ligatures: string;   // Ligatures (Clarinet) or Bows (Viola)
+  embouchure: string;
+  reed: string;
+  reeds: string;
+  reedStrength: string;
+  ligature: string;
+  ligatures: string;
 }
 
 export function getTerms(playerClass: PlayerClass): ClassTerms {
@@ -94,7 +83,6 @@ export function getTerms(playerClass: PlayerClass): ClassTerms {
       ligatures: 'Bows'
     };
   }
-  // Default: Bb Clarinet
   return {
     embouchure: 'Embouchure',
     reed: 'Reed',
@@ -107,11 +95,9 @@ export function getTerms(playerClass: PlayerClass): ClassTerms {
 
 /**
  * Transform item names based on player class
- * Replaces "Reed" with "String" and converts Ligature names to Bow names for Viola
  */
 export function localizeItemName(name: string, playerClass: PlayerClass): string {
   if (playerClass === 'viola') {
-    // First handle specific ligature-to-bow name mappings
     const bowNameMap: Record<string, string> = {
       'One-Screw Fabric Ligature': 'Student Practice Bow',
       'Two-Screw Fabric Ligature': 'Intermediate Bow',
@@ -120,13 +106,7 @@ export function localizeItemName(name: string, playerClass: PlayerClass): string
       'One-Screw Reinforced Metal Ligature': 'Concert Soloist Bow',
       'Two-Screw Reinforced Metal Ligature': 'Virtuoso Performance Bow'
     };
-
-    // Check for exact ligature name match
-    if (bowNameMap[name]) {
-      return bowNameMap[name];
-    }
-
-    // Then do general replacements
+    if (bowNameMap[name]) return bowNameMap[name];
     return name
       .replace(/\bReed\b/g, 'String')
       .replace(/\bReeds\b/g, 'Strings')
@@ -143,40 +123,32 @@ export interface PlayerStats {
   damage: number;
   basicAttackDamage: number;
   speed: number;
-  critChance: number; // 0.0 - 1.0
-  defense: number; // 0.0 - 1.0
+  critChance: number;
+  superCritChance: number;
+  defense: number;
+  impact: number;
   xp: number;
   maxXp: number;
   echoes: number;
-  equippedReed: ReedStrength | null;
-  reedDurability: number;
   embouchure: number;
   embouchureXp: number;
-  // Player Class
   playerClass: PlayerClass;
-  // Ligature System
-  equippedLigature: LigatureInstance | null;
-  // Mouthpiece System
-  equippedMouthpiece: MouthpieceInstance | null;
-  critFactor: number; // Critical hit damage multiplier (base 1.5)
-  accessorySlots: number; // 8 slots to start
-  // Dungeon Upgrades
-  dungeonTimeBonus: number; // Extra seconds for dungeon runs
-  // Positioning
+  dungeonTimeBonus: number;
   position: [number, number, number];
-
-  // Input State (Mobile)
   input: {
     joystick: { x: number, y: number };
     look: { x: number, y: number };
   };
+  sessionId: string;
+  playerName: string;
+  isLoading: boolean;
+  version: number;
 }
 
 export interface PlayerState extends PlayerStats {
   // Animation state
   isAttacking: boolean;
   attackProgress: number;
-
   attackCooldown: number;
   lastAttackTime: number;
 
@@ -185,46 +157,51 @@ export interface PlayerState extends PlayerStats {
 
   // Long Tone state
   isLongToneActive: boolean;
-  longToneCooldown: number; // Current timestamp when cooldown ends
-  longToneDuration: number; // 3000ms
-  longToneTotalCooldown: number; // 7500ms
+  longToneCooldown: number;
+  longToneDuration: number;
+  longToneTotalCooldown: number;
+
+  // Ability Upgrades
+  abilityUpgrades: AbilityUpgrades;
+
+  // Overtone state
+  isOvertoneActive: boolean;
+  overtoneCooldown: number;
+  overtoneDuration: number;
+  overtoneTotalCooldown: number;
+  lastOvertoneCastTime: number;
 
   // Tempo Combo System
-  tempo: number; // Current combo count
-  tempoRating: string; // F to Z rating
-  lastKillTime: number; // Timestamp of last kill
-  lastMoveTime: number; // Timestamp of last movement (for anti-camping)
+  tempo: number;
+  rating: string;
+  lastKillTime: number;
+  lastMoveTime: number;
 
-  // Inventory
-  inventory: Inventory;
+  // Status Effects
+  speedModifier: number;
+  isStunned: boolean;
+
+  // Performance caches
+  _cachedAbilityStats: ReturnType<typeof calculateAbilityUpgradeStats> | null;
 
   // Actions
   attack: () => void;
   addXp: (amount: number) => void;
   stopAttack: () => void;
-  takeDamage: (amount: number, enemyType?: 'trumpet' | 'trombone' | 'tuba' | 'french_horn') => void;
+  takeDamage: (amount: number, enemyType?: 'trumpet' | 'trombone' | 'tuba' | 'french_horn' | 'euphonium') => void;
   heal: (amount: number) => void;
   levelUp: () => void;
   resetPlayer: () => void;
   setPosition: (x: number, y: number, z: number) => void;
-  loadState: (savedState: Omit<Partial<PlayerStats>, 'position'> & { position?: { x: number, y: number, z: number }, inventory?: Inventory }) => void;
+  loadState: (savedState: any) => void;
 
   // Combat Actions
   triggerLongTone: () => void;
+  triggerOvertone: () => void;
   collectEchoes: (amount: number) => void;
   respawn: () => void;
   registerKill: (enemyLevel: number, xpMultiplier?: number) => void;
   updateMoveTime: () => void;
-
-  // Inventory Actions
-  addMaterial: (itemId: MaterialItemId, quantity: number) => void;
-  addReed: (strength: ReedStrength, quantity: number) => void;
-  removeMaterial: (itemId: MaterialItemId, quantity: number) => boolean;
-  removeReed: (strength: ReedStrength, quantity: number) => boolean;
-  craftRecipe: (recipeId: string) => boolean;
-  equipReed: (strength: ReedStrength | null) => void;
-  unequipReed: () => void;
-  tickReedDurability: (deltaSeconds: number) => void;
 
   // Input Actions
   setInputJoystick: (x: number, y: number) => void;
@@ -232,242 +209,331 @@ export interface PlayerState extends PlayerStats {
   resetInputLook: () => void;
 
   // Status Effects
-  speedModifier: number; // Multiplier (1.0 = normal, 0.5 = half speed)
-  isStunned: boolean;
   applySlow: (percent: number, durationSeconds: number) => void;
   applyStun: (durationSeconds: number) => void;
 
-  // Embouchure Actions
-  addEmbouchureXp: (amount: number) => void;
-
-  // Dungeon Upgrades
-  getDungeonTimeLimit: () => number; // Returns base 20 + dungeonTimeBonus
-  getNextDungeonUpgradeCost: () => { valves: number; heavyValves: number; timeIncrease: number };
-  upgradeDungeonTime: () => boolean; // Returns true if successful
-
-  // Ligature Actions
-  equipLigature: (ligatureIndex: number) => void; // Equip ligature from inventory
-  unequipLigature: () => void;
-  craftLigature: (ligatureId: LigatureId) => boolean; // Craft base ligature at level 1
-  upgradeLigature: (ligatureIndex: number) => boolean; // Upgrade ligature to next level
-  getLigatureBonus: () => { longToneDurationMs: number; lowBrassDefense: number }; // Current ligature bonuses
-
-  // Mouthpiece Actions
-  equipMouthpiece: (mouthpieceIndex: number) => void;
-  unequipMouthpiece: () => void;
-  craftMouthpiece: (mouthpieceId: MouthpieceId) => boolean;
-  upgradeMouthpiece: (mouthpieceIndex: number) => boolean;
-  getMouthpieceBonus: () => { critFactor: number; critChance: number };
-
   // Class Selection
   setPlayerClass: (playerClass: PlayerClass) => void;
+  setPlayerName: (name: string) => void;
+
+  // Ability Upgrade Actions
+  purchaseAbilityUpgrade: (path?: AbilityUpgradePath) => boolean;
+  getAbilityUpgradeStats: () => ReturnType<typeof calculateAbilityUpgradeStats>;
+  isAbilityUpgradesUnlocked: () => boolean;
+  _invalidateBonusCaches: () => void;
 }
 
-// Initial stats per PRD spec for Bb Clarinet
-// Initial stats
-const initialLevel = GAME_CONFIG.STARTING_LEVEL;
-const initialStats = getStatsForLevel(initialLevel);
-const initialMaxXp = getXpRequiredForLevel(initialLevel);
+// Lazy import helpers to avoid circular dependencies
+function getAccessoryStore() {
+  return require('./accessoryStore').useAccessoryStore;
+}
 
-const INITIAL_STATS: PlayerStats = {
-  level: initialLevel,
-  health: initialStats.health,
-  maxHealth: initialStats.health,
-  damage: initialStats.damage,
-  basicAttackDamage: initialStats.damage,
-  speed: 4.5,
-  critChance: 0,
-  defense: 0,
-  xp: 0,
-  maxXp: initialMaxXp,
-  echoes: GAME_CONFIG.STARTING_ECHOES,
-  equippedReed: null,
-  reedDurability: 0,
-  embouchure: GAME_CONFIG.STARTING_EMBOUCHURE,
-  embouchureXp: 0,
-  playerClass: 'bb_clarinet', // Default to Bb Clarinet
-  equippedLigature: null,
-  equippedMouthpiece: null,
-  critFactor: 1.5, // Base crit multiplier
-  accessorySlots: 8, // 8 accessory slots to start
-  dungeonTimeBonus: 0, // Upgraded via valves
-  position: [0, 1.5, 0],
-  input: {
-    joystick: { x: 0, y: 0 },
-    look: { x: 0, y: 0 },
-  },
-};
+function getInventoryStore() {
+  return require('./inventoryStore').useInventoryStore;
+}
+
+function applyAutoBuild() {
+  const invStore = getInventoryStore();
+  const accStore = getAccessoryStore().getState();
+  const playerStore = usePlayerStore.getState();
+
+  // 1. Give 100x Strength 5 Reeds
+  invStore.getState().addReed('5.0', 100);
+
+  // Define instances
+  const ligature: LigatureInstance = { id: 'one_screw_reinforced_metal', level: 200 };
+  const mouthpiece: MouthpieceInstance = { id: 'plastic', level: 1000 };
+  const caseItem: CaseInstance = { id: 'fabric_case', level: 200, meldType: 'plated', meldTier: 5 };
+
+  // 2-4. Add items to inventory correctly via setState
+  invStore.setState((state: any) => ({
+    inventory: {
+      ...state.inventory,
+      ligatures: [...state.inventory.ligatures, ligature],
+      mouthpieces: [...state.inventory.mouthpieces, mouthpiece],
+      cases: [...state.inventory.cases, caseItem],
+    }
+  }));
+
+  const finalInv = invStore.getState().inventory;
+  const ligIndex = finalInv.ligatures.length - 1;
+  const mpIndex = finalInv.mouthpieces.length - 1;
+  const caseIndex = finalInv.cases.length - 1;
+
+  // 5. Set Slots and Equip
+  accStore.setReedSlot(0);
+  accStore.equipReed('5.0');
+
+  accStore.setLigatureSlot(1);
+  accStore.equipLigature(ligIndex);
+
+  accStore.setMouthpieceSlot(2);
+  accStore.equipMouthpiece(mpIndex);
+
+  accStore.setCaseSlot(3);
+  accStore.equipCase(caseIndex);
+
+  console.log("Auto-build complete: Equipped high-level gear (Reeds 5.0, Ligature Lvl 20, Mouthpiece Lvl 20, Case Lvl 30).");
+}
+
+// Initial stats
+function getInitialStats(): PlayerStats {
+  const initialLevel = GAME_CONFIG.STARTING_LEVEL;
+  const initialStats = getStatsForLevel(initialLevel);
+  const initialMaxXp = getXpRequiredForLevel(initialLevel);
+
+  return {
+    level: initialLevel,
+    health: initialStats.health,
+    maxHealth: initialStats.health,
+    damage: initialStats.damage,
+    basicAttackDamage: initialStats.damage,
+    speed: GAME_CONFIG.STARTING_SPEED,
+    critChance: 0,
+    superCritChance: 0,
+    defense: 0,
+    impact: 0,
+    xp: 0,
+    maxXp: initialMaxXp,
+    echoes: GAME_CONFIG.STARTING_ECHOES,
+    embouchure: GAME_CONFIG.STARTING_EMBOUCHURE,
+    embouchureXp: 0,
+    playerClass: 'bb_clarinet',
+    dungeonTimeBonus: 0,
+    position: [0, 1.5, 0],
+    input: {
+      joystick: { x: 0, y: 0 },
+      look: { x: 0, y: 0 },
+    },
+    sessionId: Math.random().toString(36).substring(2, 15),
+    playerName: '',
+    isLoading: false,
+    version: 0,
+  };
+}
 
 export const usePlayerStore = create<PlayerState>()(
   subscribeWithSelector((set, get) => ({
-    // Initial state
-    ...INITIAL_STATS,
-    // position is already in INITIAL_STATS now
-    inventory: { ...INITIAL_INVENTORY },
+    ...getInitialStats(),
     isAttacking: false,
     attackProgress: 0,
-
-    attackCooldown: 0.5, // 500ms cooldown (visual only here, actual logic in component/controller usually)
+    attackCooldown: 0.5,
     lastAttackTime: 0,
-
     isInvincible: false,
-
     isLongToneActive: false,
     longToneCooldown: 0,
     longToneDuration: 3000,
     longToneTotalCooldown: 7500,
-
-    // Tempo Combo System
+    abilityUpgrades: { chosenPath: null, currentLevel: 0, unlocked: false },
+    isOvertoneActive: false,
+    overtoneCooldown: 0,
+    overtoneDuration: 2000,
+    overtoneTotalCooldown: 15000,
+    lastOvertoneCastTime: 0,
     tempo: 0,
-    tempoRating: 'F',
+    rating: 'F',
     lastKillTime: 0,
     lastMoveTime: Date.now(),
+    speedModifier: 1.0,
+    isStunned: false,
+    _cachedAbilityStats: null,
 
-    // Actions
+    _invalidateBonusCaches: () => set({ _cachedAbilityStats: null }),
+
+    // ========== CORE ACTIONS ==========
+
     attack: () => {
       const now = Date.now();
       const state = get();
       if (state.isAttacking || now - state.lastAttackTime < state.attackCooldown * 1000) return;
       set({ isAttacking: true, attackProgress: 0, lastAttackTime: now });
+      getAccessoryStore().getState().incrementAttackCounter();
     },
 
     setPosition: (x, y, z) => set({ position: [x, y, z] }),
 
     loadState: (saved) => set((state) => {
-      // Hydrate stats
       const newStats = { ...state };
       if (saved.level) newStats.level = saved.level;
       if (saved.health) newStats.health = saved.health;
       if (saved.xp) newStats.xp = saved.xp;
       if (saved.echoes) newStats.echoes = saved.echoes;
 
-      // Recalculate derived stats to be safe
       if (saved.level) {
-        const derived = calculateStats(saved.level, newStats.equippedReed, newStats.embouchure);
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+        const accStore = getAccessoryStore().getState();
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const derived = calculateStats(saved.level, accStore.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
         newStats.maxHealth = derived.health;
         newStats.damage = derived.damage;
         newStats.basicAttackDamage = derived.basicAttackDamage;
         newStats.speed = derived.speed;
         newStats.critChance = derived.critChance;
+        newStats.superCritChance = (derived as any).superCritChance || 0;
         newStats.defense = derived.defense;
         newStats.maxXp = getXpRequiredForLevel(saved.level);
       }
 
-      if (saved.reedDurability) newStats.reedDurability = saved.reedDurability;
+      if (saved.reedDurability) getAccessoryStore().setState({ reedDurability: saved.reedDurability });
       if (saved.embouchure) newStats.embouchure = saved.embouchure;
       if (saved.embouchureXp) newStats.embouchureXp = saved.embouchureXp;
-      if (saved.embouchureXp) newStats.embouchureXp = saved.embouchureXp;
       if (saved.dungeonTimeBonus !== undefined) {
-        console.log('Loading dungeonTimeBonus:', saved.dungeonTimeBonus);
         newStats.dungeonTimeBonus = saved.dungeonTimeBonus;
+        getAccessoryStore().setState({ dungeonTimeBonus: saved.dungeonTimeBonus });
       }
 
-      // If loading saved equipped reed, recalculate stats
       if (saved.equippedReed !== undefined) {
-        newStats.equippedReed = saved.equippedReed;
-        const derived = calculateStats(newStats.level, newStats.equippedReed, newStats.embouchure);
+        getAccessoryStore().setState({ equippedReed: saved.equippedReed });
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+        const accStore = getAccessoryStore().getState();
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const derived = calculateStats(newStats.level, saved.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
         newStats.maxHealth = derived.health;
         newStats.damage = derived.damage;
         newStats.basicAttackDamage = derived.basicAttackDamage;
         newStats.speed = derived.speed;
         newStats.critChance = derived.critChance;
+        newStats.superCritChance = (derived as any).superCritChance || 0;
         newStats.defense = derived.defense;
       }
 
       if (saved.maxHealth) newStats.maxHealth = saved.maxHealth;
-      // Restore position if available
       if (saved.position) newStats.position = [saved.position.x, saved.position.y, saved.position.z];
 
-      // Restore inventory if available (Deep merge to ensure new categories like reeds exist)
+      // Restore inventory
       if (saved.inventory) {
-        newStats.inventory = {
-          materials: { ...INITIAL_INVENTORY.materials, ...saved.inventory.materials },
-          reeds: { ...INITIAL_INVENTORY.reeds, ...(saved.inventory.reeds || {}) },
-          accessories: { ...INITIAL_INVENTORY.accessories, ...(saved.inventory.accessories || {}) },
-          ligatures: saved.inventory.ligatures || [],
-          mouthpieces: saved.inventory.mouthpieces || []
-        };
+        const invStore = getInventoryStore();
+        invStore.setState({
+          inventory: {
+            materials: { ...getInitialInventory().materials, ...saved.inventory.materials },
+            reeds: { ...getInitialInventory().reeds, ...(saved.inventory.reeds || {}) },
+            accessories: { ...getInitialInventory().accessories, ...(saved.inventory.accessories || {}) },
+            ligatures: saved.inventory.ligatures || [],
+            mouthpieces: saved.inventory.mouthpieces || [],
+            cases: saved.inventory.cases || [],
+            enchantments: saved.inventory.enchantments || [],
+          },
+          echoes: newStats.echoes,
+        });
       }
 
-      // Sync echoes to inventory for display
-      if (newStats.inventory) {
-        newStats.inventory.materials = {
-          ...newStats.inventory.materials,
-          echoes: newStats.echoes
-        };
+      // Restore accessory state
+      const accUpdates: any = {};
+      if (saved.equippedLigature !== undefined) accUpdates.equippedLigature = saved.equippedLigature;
+      if (saved.equippedMouthpiece !== undefined) accUpdates.equippedMouthpiece = saved.equippedMouthpiece;
+      if (saved.critFactor !== undefined) accUpdates.critFactor = saved.critFactor;
+      if (saved.equippedCase !== undefined) accUpdates.equippedCase = saved.equippedCase;
+      if (saved.ligatureSlot !== undefined) accUpdates.ligatureSlot = saved.ligatureSlot;
+      if (saved.mouthpieceSlot !== undefined) accUpdates.mouthpieceSlot = saved.mouthpieceSlot;
+      if (saved.caseSlot !== undefined) accUpdates.caseSlot = saved.caseSlot;
+      if (saved.reedSlot !== undefined) accUpdates.reedSlot = saved.reedSlot;
+      if (saved.equippedEnchantments !== undefined) accUpdates.equippedEnchantments = saved.equippedEnchantments;
+      if (saved.enchantmentSlots !== undefined) accUpdates.enchantmentSlots = saved.enchantmentSlots;
+      if (saved.attackCounter !== undefined) accUpdates.attackCounter = saved.attackCounter;
+      if (saved.hasEmpoweringSpeedBonus !== undefined) accUpdates.hasEmpoweringSpeedBonus = saved.hasEmpoweringSpeedBonus;
+      if (saved.accessorySlots !== undefined) accUpdates.accessorySlots = saved.accessorySlots;
+      if (Object.keys(accUpdates).length > 0) getAccessoryStore().setState(accUpdates);
+
+      if (saved.currentAltarIndex !== undefined) {
+        const { useGameStore } = require('./gameStore');
+        useGameStore.getState().setAltarIndex(saved.currentAltarIndex);
       }
 
-      // Restore equipped ligature if available
-      if (saved.equippedLigature !== undefined) {
-        newStats.equippedLigature = saved.equippedLigature;
-      }
+      if (saved.playerClass) newStats.playerClass = saved.playerClass;
+      if (saved.playerName) newStats.playerName = saved.playerName;
+      if (saved.abilityUpgrades) (newStats as any).abilityUpgrades = saved.abilityUpgrades;
 
-      // Restore equipped mouthpiece and critFactor if available
-      if (saved.equippedMouthpiece !== undefined) {
-        newStats.equippedMouthpiece = saved.equippedMouthpiece;
-      }
-      if (saved.critFactor !== undefined) {
-        newStats.critFactor = saved.critFactor;
-      }
+      // Preserve current sessionId if we are loading into the same tab
+      // But allow overriding if the save has one (though we usually want to keep our tab identity)
+      newStats.sessionId = get().sessionId;
+      newStats.isLoading = true; // Mark as loading while we do async recalculations
 
-      // Restore player class if available
-      if (saved.playerClass) {
-        newStats.playerClass = saved.playerClass;
-      }
+      // Fallback stat recalculation
+      setTimeout(() => {
+        const currentState = get();
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+        const accStore = getAccessoryStore().getState();
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const finalStats = calculateStats(currentState.level, accStore.equippedReed, currentState.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
 
-      return newStats;
+        let mpCritBonus = 0;
+        if (accStore.equippedMouthpiece) {
+          const mpStats = getMouthpieceStats(accStore.equippedMouthpiece.id, accStore.equippedMouthpiece.level);
+          mpCritBonus = mpStats.critChance * getSlotMultiplier(accStore.mouthpieceSlot);
+        }
+
+        let finalCritFactor = 1.5;
+        if (accStore.equippedMouthpiece) {
+          const mpStats = getMouthpieceStats(accStore.equippedMouthpiece.id, accStore.equippedMouthpiece.level);
+          finalCritFactor = 1.5 + (mpStats.critFactor * getSlotMultiplier(accStore.mouthpieceSlot));
+        }
+
+        set((s) => ({
+          maxHealth: finalStats.health,
+          speed: finalStats.speed,
+          critChance: finalStats.critChance + mpCritBonus,
+          superCritChance: ((finalStats.critChance + mpCritBonus) > 1.0) ? ((finalStats.critChance + mpCritBonus) - 1.0) / 10 : 0,
+          defense: finalStats.defense,
+          health: Math.min(s.health, finalStats.health),
+          isLoading: false, // Done loading!
+        }));
+        getAccessoryStore().setState({ critFactor: finalCritFactor });
+      }, 300); // Slightly longer delay to ensure all stores are ready
+
+      return {
+        ...newStats,
+        _cachedAbilityStats: null,
+      };
     }),
 
     addXp: (amount) =>
       set((state) => {
-        let { xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, defense } = state;
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+        let { xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, superCritChance, defense } = state;
         xp += amount;
 
-        // Level up logic
         if (xp >= maxXp) {
           xp -= maxXp;
           level += 1;
-
-          // Recalculate stats for new level
-          const newStats = calculateStats(level, state.equippedReed, state.embouchure);
+          const accStore = getAccessoryStore().getState();
+          const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
           const newMaxXp = getXpRequiredForLevel(level);
-
-          // Heal to full on level up
           health = newStats.health;
           maxHealth = newStats.health;
           damage = newStats.damage;
           basicAttackDamage = newStats.basicAttackDamage;
           speed = newStats.speed;
           critChance = newStats.critChance;
+          superCritChance = (newStats as any).superCritChance || 0;
           defense = newStats.defense;
           maxXp = newMaxXp;
         }
 
-        return { xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, defense };
+        return { xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, superCritChance, defense, version: state.version + 1 };
       }),
 
-    stopAttack: () => {
-      set({ isAttacking: false, attackProgress: 0 });
-    },
+    stopAttack: () => set({ isAttacking: false, attackProgress: 0 }),
 
     takeDamage: (amount, enemyType) =>
       set((state) => {
-        if (state.isInvincible || GAME_CONFIG.INVINCIBLE) return {}; // No damage if invincible
+        if (state.isInvincible || GAME_CONFIG.INVINCIBLE) return {};
 
-        // Apply Defense
         let totalDefense = state.defense;
+        const accStore = getAccessoryStore().getState();
+        const meldBonus = accStore.getMeldBonus();
+        totalDefense += meldBonus.defense;
 
-        // Apply ligature low brass defense for Tubas (and future Euphoniums)
-        if (enemyType === 'tuba' && state.equippedLigature) {
-          const ligatureBonus = getLigatureStats(state.equippedLigature.id, state.equippedLigature.level);
-          totalDefense = Math.min(0.9, totalDefense + ligatureBonus.lowBrassDefense); // Cap at 90%
+        if (enemyType === 'euphonium') {
+          const enchantmentBonus = accStore.getEnchantmentBonus();
+          totalDefense += enchantmentBonus.euphoniumDefenseBonus;
         }
 
-        const reducedAmount = Math.max(0, amount * (1.0 - totalDefense));
-
+        // Cap defense at 98% so players can never be completely immune to damage
+        const effectiveDefense = Math.min(0.98, totalDefense);
+        const reducedAmount = Math.max(0, amount * (1.0 - effectiveDefense));
         const newHealth = Math.max(0, state.health - reducedAmount);
-        if (newHealth <= 0) {
-          // Play death sound
+        if (newHealth <= 0 && state.health > 0) {
           AudioManager.load(DEATH_SOUND_KEY, DEATH_SOUND_SRC);
           AudioManager.play(DEATH_SOUND_KEY, 'sfx', { volume: 0.5 });
           useGameStore.getState().setGameState('gameOver');
@@ -482,783 +548,352 @@ export const usePlayerStore = create<PlayerState>()(
 
     levelUp: () =>
       set((state) => {
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const newLevel = state.level + 1;
-        const newStats = calculateStats(newLevel, state.equippedReed, state.embouchure);
+        const accStore = getAccessoryStore().getState();
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const newStats = calculateStats(newLevel, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
         return {
           level: newLevel,
           maxHealth: newStats.health,
-          health: newStats.health, // Full heal on level up
+          health: newStats.health,
           damage: newStats.damage,
           speed: newStats.speed,
+          version: state.version + 1,
         };
       }),
 
-    resetPlayer: () =>
+    resetPlayer: () => {
+      // Reset all three stores
+      getAccessoryStore().setState({
+        equippedReed: null, reedDurability: 0, equippedLigature: null, equippedMouthpiece: null,
+        critFactor: 1.5, equippedCase: null, ligatureSlot: -1, mouthpieceSlot: -1, reedSlot: -1, caseSlot: -1,
+        equippedEnchantments: { common: null, infused: null, arcane: null },
+        enchantmentSlots: { common: -1, infused: -1, arcane: -1 },
+        attackCounter: 0, hasEmpoweringSpeedBonus: false, dungeonTimeBonus: 0,
+        _cachedLigatureBonus: null, _cachedMouthpieceBonus: null, _cachedCaseBonus: null,
+        _cachedMeldBonus: null, _cachedEnchantmentBonus: null,
+      });
+      getInventoryStore().setState({
+        inventory: { ...getInitialInventory() },
+        echoes: GAME_CONFIG.STARTING_ECHOES,
+      });
       set({
-        ...INITIAL_STATS,
+        ...getInitialStats(),
+        echoes: GAME_CONFIG.STARTING_ECHOES,
         position: [0, 1.5, 0],
-        inventory: { ...INITIAL_INVENTORY },
-        health: INITIAL_STATS.maxHealth, // Ensure full health
-        isAttacking: false,
-        attackProgress: 0,
-        lastAttackTime: 0,
-        isInvincible: false,
-        isLongToneActive: false,
-        longToneCooldown: 0,
-        equippedReed: null,
-      }),
+        health: getInitialStats().maxHealth,
+        isAttacking: false, attackProgress: 0, lastAttackTime: 0,
+        isInvincible: false, isLongToneActive: false, longToneCooldown: 0,
+        isOvertoneActive: false, overtoneCooldown: 0,
+        abilityUpgrades: { chosenPath: null, currentLevel: 0, unlocked: false },
+        _cachedAbilityStats: null,
+      });
+
+      if (GAME_CONFIG.AUTO_BUILD) {
+        setTimeout(applyAutoBuild, 100);
+      }
+    },
 
     triggerLongTone: () => {
       const now = Date.now();
       const state = get();
-      if (now < state.longToneCooldown) return;
+      if (state.isLongToneActive || now < state.longToneCooldown) return;
 
-      // Calculate Long Tone duration with ligature bonus
       let duration = state.longToneDuration;
-      if (state.equippedLigature) {
-        const ligatureBonus = getLigatureStats(state.equippedLigature.id, state.equippedLigature.level);
-        duration += ligatureBonus.longToneBonus * 1000; // Convert seconds to ms
+      const accStore = getAccessoryStore().getState();
+      if (accStore.equippedLigature) {
+        const ligatureBonus = accStore.getLigatureBonus();
+        duration += ligatureBonus.longToneDurationMs;
       }
 
-      set({
-        isLongToneActive: true,
-        longToneCooldown: now + state.longToneTotalCooldown
-      });
+      set({ isLongToneActive: true });
 
-      // Auto-deactivate after duration (with ligature bonus)
       setTimeout(() => {
-        set({ isLongToneActive: false });
+        set({
+          isLongToneActive: false,
+          longToneCooldown: Date.now() + get().longToneTotalCooldown,
+        });
       }, duration);
     },
 
-    collectEchoes: (amount) => set((state) => ({
-      echoes: state.echoes + amount,
-      inventory: {
-        ...state.inventory,
-        materials: {
-          ...state.inventory.materials,
-          echoes: (state.inventory.materials.echoes || 0) + amount
-        }
-      }
-    })),
-
-    respawn: () => {
-      set((state) => ({
-        health: state.maxHealth,
-        isAttacking: false,
-        isLongToneActive: false,
-        isInvincible: true, // Invincible on respawn
-        position: [0, 1.5, 0], // Reset position to center for respawn
-        speedModifier: 1.0, // Reset speed on respawn
-        tempo: 0, // Reset tempo on death
-        tempoRating: 'F',
-        lastKillTime: 0,
-      }));
-
-      // Remove invincibility after 2s
-      setTimeout(() => {
-        set({ isInvincible: false });
-      }, 2000);
-
-      // Reset game state to playing if needed
-      useGameStore.getState().setGameState('playing');
-    },
-
-    // === Tempo Combo System ===
-    registerKill: (enemyLevel: number, xpMultiplier: number = 1) => {
+    triggerOvertone: () => {
       const now = Date.now();
       const state = get();
-      const COMBO_WINDOW = 7000; // 7 seconds
+      if (state.isOvertoneActive || now < state.overtoneCooldown) return;
 
-      let newTempo = state.tempo;
+      set({
+        isOvertoneActive: true,
+        lastOvertoneCastTime: now
+      });
 
-      // Check if within combo window
-      if (state.lastKillTime > 0 && now - state.lastKillTime <= COMBO_WINDOW) {
-        // Continuing combo - increment
-        newTempo += 1;
-      } else {
-        // Combo broken or first kill - start fresh at 1
-        newTempo = 1;
-      }
-
-      // Calculate Tempo Rating (F to Z based on tempo count)
-      // F=0, D=1-2, C=3-5, B=6-10, A=11-20, S=21-40, SS=41-70, SSS=71-100, Z=101+
-      let rating = 'F';
-      if (newTempo >= 101) rating = 'Z';
-      else if (newTempo >= 71) rating = 'SSS';
-      else if (newTempo >= 41) rating = 'SS';
-      else if (newTempo >= 21) rating = 'S';
-      else if (newTempo >= 11) rating = 'A';
-      else if (newTempo >= 6) rating = 'B';
-      else if (newTempo >= 3) rating = 'C';
-      else if (newTempo >= 1) rating = 'D';
-
-      // Calculate XP bonus: +0.1x per 2 Tempo
-      const bonusMultiplier = 1 + Math.floor(newTempo / 2) * 0.1;
-
-      // Base XP scales with enemy level (0.25 per level + small exponential bonus for high levels)
-      // Level 1: 1 XP, Level 10: 3.25 XP, Level 50: ~14.3 XP, Level 100: ~33 XP
-      const linearXp = 1 + (enemyLevel - 1) * 0.25;
-      const expBonus = Math.pow(1.01, enemyLevel / 5); // ~1% bonus per 5 levels
-      const baseXp = linearXp * expBonus;
-      // Apply enemy type multiplier (Trumpet=1, Trombone=1.5, Horn=2.5, Tuba=5)
-      const finalXp = baseXp * bonusMultiplier * xpMultiplier;
-
-      set({ tempo: newTempo, tempoRating: rating, lastKillTime: now });
-
-      // Grant XP with bonus applied
-      get().addXp(finalXp);
+      setTimeout(() => {
+        set({
+          isOvertoneActive: false,
+          overtoneCooldown: Date.now() + get().overtoneTotalCooldown,
+        });
+      }, state.overtoneDuration);
     },
 
-    updateMoveTime: () => set({ lastMoveTime: Date.now() }),
+    collectEchoes: (amount) =>
+      set((state) => {
+        const newEchoes = state.echoes + amount;
+        // Sync to inventoryStore
+        getInventoryStore().getState().syncEchoes(amount);
+        return { echoes: newEchoes, version: state.version + 1 };
+      }),
 
-    // Status Effects
-    speedModifier: 1.0,
+    respawn: () => {
+      const currentPos = get().position;
+      // The north corridor ends at Z=574. Everything past that is the Altar Room.
+      const inAltarRoom = currentPos[2] > 574;
 
-    isStunned: false,
-
-    applyStun: (duration: number) => {
-      // Stun overrides everything
-      set({ isStunned: true, isAttacking: false, attackProgress: 0 });
-
-      // Auto-remove stun
       setTimeout(() => {
-        // Only remove if this specific stun is done?
-        // Simple version: just set false. Overlapping stuns might bug out but it's MVP.
-        set({ isStunned: false });
-      }, duration * 1000);
+        usePlayerStore.setState({ isInvincible: false });
+      }, 3000);
+
+      return set((state) => {
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+        const accStore = getAccessoryStore().getState();
+        const gameStore = useGameStore.getState();
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const stats = calculateStats(state.level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+
+        let spawnPos: [number, number, number] = [0, 1.5, 0];
+
+        // Spawn on top of the altar if the player died in the Altar Room
+        if (inAltarRoom) {
+          gameStore.incrementAltarDeathCount();
+          const newDeathCount = gameStore.altarDeathCount + 1;
+
+          if (newDeathCount >= 10) {
+            console.log("10 deaths in Altar Room reached. Resetting altar and returning to spawn.");
+            gameStore.resetAltarDeathCount();
+            gameStore.setAltarRoomWave(0);
+            spawnPos = [0, 1.5, 0]; // Back to main spawn
+            // Play a reset sound
+            AudioManager.play('death', 'sfx', { volume: 0.8 });
+          } else {
+            console.log(`Death in Altar Room. Altar Death Count: ${newDeathCount}/10`);
+            spawnPos = [0, 5, 636.5]; // Altar center Z is 636.5, top Y is 4.0
+          }
+        }
+
+        return {
+          health: stats.health,
+          maxHealth: stats.health,
+          position: spawnPos,
+          isAttacking: false,
+          attackProgress: 0,
+          isInvincible: true,
+          isLongToneActive: false,
+          longToneCooldown: 0,
+          isOvertoneActive: false,
+          overtoneCooldown: 0,
+          tempo: 0,
+          rating: 'F',
+        };
+      });
+    },
+
+
+    // XP ADDITION
+
+    registerKill: (enemyLevel, xpMultiplier = 1) =>
+      set((state) => {
+        const now = Date.now();
+        const timeSinceLastKill = now - state.lastKillTime;
+        const timeSinceLastMove = now - state.lastMoveTime;
+
+        // Anti-camping: if player hasn't moved in 5s, zero combo
+        if (timeSinceLastMove > 8000) {
+          return { tempo: 0, rating: 'F', lastKillTime: now };
+        }
+
+        let newTempo = state.tempo;
+        if (timeSinceLastKill < 6000) {
+          newTempo += 1;
+        } else if (timeSinceLastKill < 8000) {
+          // No change
+        } else {
+          newTempo = 1;
+        }
+
+        let xpMultFromTempo = 1
+        xpMultFromTempo = 1 + Math.floor(newTempo / 2) * 0.1;
+
+
+        let rating = 'F';
+        if (newTempo >= 10001) rating = 'Ω∞';
+        else if (newTempo >= 5001) rating = 'Ω!';
+        else if (newTempo >= 3001) rating = 'Ω?';
+        else if (newTempo >= 2001) rating = '+Ω';
+        else if (newTempo >= 1501) rating = 'Ω';
+        else if (newTempo >= 1001) rating = 'Z++';
+        else if (newTempo >= 501) rating = 'Z+';
+        else if (newTempo >= 301) rating = 'Z';
+        else if (newTempo >= 201) rating = 'Y';
+        else if (newTempo >= 101) rating = 'X';
+        else if (newTempo >= 71) rating = 'SSS';
+        else if (newTempo >= 41) rating = 'SS';
+        else if (newTempo >= 21) rating = 'S';
+        else if (newTempo >= 11) rating = 'A';
+        else if (newTempo >= 6) rating = 'B';
+        else if (newTempo >= 3) rating = 'C';
+        else if (newTempo >= 1) rating = 'D';
+
+        /* 
+          Enemy XP: 1x from trumpets, 1.5x from trombones, 2x from horns, 3x from euphoniums, 5x from tubas imported from enemy files.
+          XP also multiplied by if the enemy is in an altar wave. If in a wave 1, x1.5, wave 2, x2, wave 3, x3, wave 4, x4, wave 5, x5. If elsewhere, it's just 1x. Stacks with tempo, enemy type, and base XP.
+
+          Base XP scales with enemy level (0.25 per level + small exponential bonus for high levels)
+          Level 1: 1 XP, Level 10: 3.25 XP, Level 50: ~14.3 XP, Level 100: ~33 XP
+          ~1% bonus per 5 levels
+          Extra 1.5% bonus per level above level 100
+
+          xpMultiplier is the multiplier of enemy type * altar.
+
+          Total multipliers: Tempo, Enemy Type, Altar, High Level Bonus, Base XP
+
+        */
+
+        let alina = 5
+
+        let alinalevel = Math.min(enemyLevel, 1000)
+
+        if (enemyLevel >= 500) {
+          alina = 5 + Math.floor((alinalevel - 500) / 300);
+        }
+
+        let alinatwo = Math.floor(alinalevel / alina) * Math.max(Math.log(alinalevel / 200), 1)
+
+        const linearXp = 1 + (enemyLevel - 1) * 0.25;
+        let expBonus = 0;
+        if (enemyLevel <= 1000) {
+          expBonus = Math.pow(1.025, alinatwo) - 1;
+        } else {
+          let exp = Math.min((alinatwo + ((enemyLevel - 1000) / 25)), 1000)
+          expBonus = Math.pow(1.025, exp) - 1;
+        }
+        let HighLevelMult = 1;
+        if (enemyLevel >= 100) {
+          HighLevelMult = 1 + (enemyLevel - 100) * 0.015;
+        }
+        const basexp = (linearXp + expBonus) * HighLevelMult;
+
+        const totalXp = Math.floor(basexp * xpMultFromTempo * xpMultiplier);
+
+
+
+        let { xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, superCritChance, defense } = state;
+        xp += totalXp;
+
+        if (xp >= maxXp) {
+          xp -= maxXp;
+          level += 1;
+          const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+          const accStore = getAccessoryStore().getState();
+          const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+          health = newStats.health;
+          maxHealth = newStats.health;
+          damage = newStats.damage;
+          basicAttackDamage = newStats.basicAttackDamage;
+          speed = newStats.speed;
+          critChance = newStats.critChance;
+          superCritChance = (newStats as any).superCritChance || 0;
+          defense = newStats.defense;
+          maxXp = getXpRequiredForLevel(level);
+        }
+
+        return {
+          tempo: newTempo, rating, lastKillTime: now,
+          xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, superCritChance, defense,
+          version: state.version + 1,
+        };
+      }),
+
+    updateMoveTime: () => set({ lastMoveTime: Date.now() }),
+    setPlayerName: (name: string) => set({ playerName: name, version: get().version + 1 }),
+
+    applyStun: (duration) => {
+      set({ isStunned: true });
+      setTimeout(() => set({ isStunned: false }), duration * 1000);
     },
 
     applySlow: (percent, duration) => {
-      // e.g. percent 20 = 0.8 modifier
-      const modifier = Math.max(0.1, 1 - percent / 100);
-      set({ speedModifier: modifier });
-
-      // Reset after duration
-      setTimeout(() => {
-        set((state) => {
-          // Only reset if it hasn't been overwritten by a stronger slow?
-          // For MVP, just reset to 1.0. A real system would need a stack of effects.
-          // Checking if current modifier matches what we set would be safer but simple is fine.
-          return { speedModifier: 1.0 };
-        });
-      }, duration * 1000);
+      const modifier = 1.0 - (percent / 100.0);
+      set({ speedModifier: Math.max(0.1, modifier) }); // Minimum 10% speed limit
+      setTimeout(() => set({ speedModifier: 1.0 }), duration * 1000);
     },
 
-    // Inventory Actions
-    addMaterial: (itemId, quantity) => set((state) => ({
-      inventory: {
-        ...state.inventory,
-        materials: {
-          ...state.inventory.materials,
-          [itemId]: state.inventory.materials[itemId] + quantity,
-        },
-      },
-    })),
+    // ========== INPUT ==========
 
-    addReed: (strength, quantity) => set((state) => ({
-      inventory: {
-        ...state.inventory,
-        reeds: {
-          ...state.inventory.reeds,
-          [strength]: state.inventory.reeds[strength] + quantity,
-        },
-      },
-    })),
-
-    removeMaterial: (itemId, quantity) => {
-      const state = get();
-      const currentQty = state.inventory.materials[itemId];
-      if (currentQty < quantity) return false;
-
-      set({
-        inventory: {
-          ...state.inventory,
-          materials: {
-            ...state.inventory.materials,
-            [itemId]: currentQty - quantity,
-          },
-        },
-      });
-      return true;
-    },
-
-    removeReed: (strength, quantity) => {
-      const state = get();
-      const currentQty = state.inventory.reeds[strength];
-      if (currentQty < quantity) return false;
-
-      set({
-        inventory: {
-          ...state.inventory,
-          reeds: {
-            ...state.inventory.reeds,
-            [strength]: currentQty - quantity,
-          },
-        },
-      });
-      return true;
-    },
-
-    equipReed: (strength) => set((state) => {
-      if (!strength) {
-        // Null passed -> Unequip
-        return {
-          equippedReed: null,
-          reedDurability: 0,
-          // Recalc stats to base
-          ...calculateStats(state.level, null, state.embouchure)
-        } as Partial<PlayerState>;
-      }
-
-      // Equip specific strength
-      if (state.inventory.reeds[strength] <= 0) return {}; // Check ownership
-
-      // Consume usage? Logic: Take from inventory, put on MP.
-      // Decrement inventory
-      const newReeds = { ...state.inventory.reeds };
-      newReeds[strength] = Math.max(0, newReeds[strength] - 1);
-
-      const newStats = calculateStats(state.level, strength, state.embouchure);
-      // Maintain HP percentage
-      const hpRatio = state.maxHealth > 0 ? state.health / state.maxHealth : 1;
-      const newHealth = Math.max(1, Math.floor(newStats.health * hpRatio));
-
-      return {
-        equippedReed: strength,
-        reedDurability: 600, // 10 minutes
-        inventory: {
-          ...state.inventory,
-          reeds: newReeds
-        },
-        maxHealth: newStats.health,
-        health: newHealth,
-        damage: newStats.damage,
-        speed: newStats.speed,
-        critChance: newStats.critChance,
-        defense: newStats.defense
-      };
-    }),
-
-    unequipReed: () => set((state) => {
-      if (!state.equippedReed) return {};
-
-      const newStats = calculateStats(state.level, null, state.embouchure);
-      const hpRatio = state.maxHealth > 0 ? state.health / state.maxHealth : 1;
-      const newHealth = Math.max(1, Math.floor(newStats.health * hpRatio));
-
-      return {
-        equippedReed: null,
-        reedDurability: 0,
-        maxHealth: newStats.health,
-        health: newHealth,
-        damage: newStats.damage,
-        speed: newStats.speed,
-        critChance: newStats.critChance,
-        defense: newStats.defense
-      };
-    }),
-
-    tickReedDurability: (dt) => set((state) => {
-      if (!state.equippedReed || state.reedDurability <= 0) return {};
-
-      const newDurability = state.reedDurability - dt;
-      if (newDurability <= 0) {
-        // Break!
-        // Automatically unequip
-        const newStats = calculateStats(state.level, null, state.embouchure);
-        const hpRatio = state.maxHealth > 0 ? state.health / state.maxHealth : 1;
-        const newHealth = Math.max(1, Math.floor(newStats.health * hpRatio));
-
-        // TODO: Ideally notify user via toast/message here?
-        // Store has no UI access. UI subscribes to store.
-
-        return {
-          equippedReed: null,
-          reedDurability: 0,
-          maxHealth: newStats.health,
-          health: newHealth,
-          damage: newStats.damage,
-          speed: newStats.speed,
-          critChance: newStats.critChance,
-          defense: newStats.defense
-        };
-      }
-
-      return { reedDurability: newDurability };
-    }),
-
-    addEmbouchureXp: (amount) => set((state) => {
-      if (state.embouchure >= 10) return {}; // Max level
-
-      let { embouchure, embouchureXp } = state;
-      embouchureXp += amount;
-
-      // Exponential scaling for Embouchure
-      // Level 1->2: 100
-      // Level 2->3: 200
-      // ...
-      const xpRequired = embouchure * 100;
-
-      let newCritChance = state.critChance;
-      if (embouchureXp >= xpRequired) {
-        embouchureXp -= xpRequired;
-        embouchure += 1;
-        // Cap at 10
-        if (embouchure > 10) {
-          embouchure = 10;
-          embouchureXp = 0;
-        }
-        // Recalculate crit chance with new embouchure level
-        const newStats = calculateStats(state.level, state.equippedReed, embouchure);
-        newCritChance = newStats.critChance;
-      }
-
-      return { embouchure, embouchureXp, critChance: newCritChance };
-    }),
-
-    // Input Actions
     setInputJoystick: (x, y) => set((state) => ({
       input: { ...state.input, joystick: { x, y } }
     })),
 
     setInputLook: (x, y) => set((state) => ({
-      input: {
-        ...state.input,
-        look: {
-          x: state.input.look.x + x,
-          y: state.input.look.y + y
-        }
-      }
+      input: { ...state.input, look: { x: state.input.look.x + x, y: state.input.look.y + y } }
     })),
 
     resetInputLook: () => set((state) => ({
       input: { ...state.input, look: { x: 0, y: 0 } }
     })),
 
-    craftRecipe: (recipeId) => {
+    // ========== CLASS ==========
+
+    setPlayerClass: (playerClass) => set({ playerClass }),
+
+    // ========== ABILITY UPGRADES ==========
+
+    purchaseAbilityUpgrade: (path?) => {
       const state = get();
-      const recipe = ALL_RECIPES.find(r => r.id === recipeId);
-      if (!recipe) return false;
+      const upgrades = state.abilityUpgrades;
 
-      // Check ingredients
-      const inventory = state.inventory;
-      for (const ing of recipe.ingredients) {
-        // Determine type
-        let currentQty = 0;
-        // Check materials
-        if (ing.itemId in inventory.materials) {
-          currentQty = inventory.materials[ing.itemId as MaterialItemId] || 0;
-        } else if (ing.itemId in inventory.reeds) {
-          currentQty = inventory.reeds[ing.itemId as ReedStrength] || 0;
-        } else if (ing.itemId === 'echoes') {
-          // Echoes are special currency
-          // Wait, echoes logic in store is `state.echoes` (currency) AND `state.inventory.materials.echoes`?
-          // Wait, logic in Step 730 `collectEchoes`: "collects currency AND adds to inventory".
-          // So we can check inventory.materials.echoes?
-          // Or stick to `state.echoes` as spending currency?
-          // The `inventory.materials.echoes` was for display.
-          // Ideally I should spend from BOTH to keep them in sync.
-          currentQty = state.echoes;
-        }
+      if (state.level < ABILITY_UPGRADES_UNLOCK_LEVEL) return false;
+      if (upgrades.currentLevel >= 25) return false;
+      if (upgrades.currentLevel >= 10 && state.level < ABILITY_UPGRADES_TIER_2_UNLOCK_LEVEL) return false;
+      if (upgrades.currentLevel === 0 && !path) return false;
 
-        if (currentQty < ing.quantity) return false;
+      const currentLevelIndex = upgrades.currentLevel;
+      const isTier2 = currentLevelIndex >= 10;
+      const tierIndex = isTier2 ? currentLevelIndex - 10 : currentLevelIndex;
+      const upgradeDef = isTier2 ? ABILITY_UPGRADES_TIER_2[tierIndex] : ABILITY_UPGRADES_TIER_1[currentLevelIndex];
+
+      let upgradeLevel: { cost: number; costMaterial: MaterialItemId } | null = null;
+
+      if ('paths' in upgradeDef) {
+        // It's a PathSpecificUpgrade
+        upgradeLevel = upgradeDef;
+      } else {
+        // It's a standard AbilityUpgradeLevel
+        upgradeLevel = upgradeDef as { cost: number; costMaterial: MaterialItemId };
       }
 
-      // Deduct ingredients
-      set((state) => {
-        const newMaterials = { ...state.inventory.materials };
-        const newReeds = { ...state.inventory.reeds };
-        let newEchoes = state.echoes;
+      if (!upgradeLevel || !upgradeLevel.costMaterial || typeof upgradeLevel.cost !== 'number') return false;
 
-        // First pass: Deduct
-        for (const ing of recipe.ingredients) {
-          if (ing.itemId === 'echoes') {
-            newEchoes -= ing.quantity;
-            // Also sync inventory display
-            newMaterials.echoes = newEchoes;
-          } else if (ing.itemId in newMaterials) {
-            newMaterials[ing.itemId as MaterialItemId] -= ing.quantity;
-          } else if (ing.itemId in newReeds) {
-            newReeds[ing.itemId as ReedStrength] -= ing.quantity;
-          }
-        }
+      const invStore = getInventoryStore().getState();
+      if (!invStore.removeMaterial(upgradeLevel.costMaterial, upgradeLevel.cost)) return false;
 
-        // Second pass: Add output
-        if (recipe.outputId in newReeds) {
-          newReeds[recipe.outputId as ReedStrength] = (newReeds[recipe.outputId as ReedStrength] || 0) + recipe.outputQuantity;
-
-          // Award XP for crafting reeds
-          // Normalize strength to a number for scaling
-          const strengthVal = parseFloat(recipe.outputId as string);
-          if (!isNaN(strengthVal)) {
-            // Base XP: 50 * Strength
-            // 1.0 -> 50 XP
-            // 2.5 -> 125 XP
-            // 5.0 -> 250 XP
-            const xpReward = Math.floor((strengthVal ** 2) * 10);
-            get().addXp(xpReward);
-          }
-
-        } else if (recipe.outputId in newMaterials) {
-          newMaterials[recipe.outputId as MaterialItemId] = (newMaterials[recipe.outputId as MaterialItemId] || 0) + recipe.outputQuantity;
-        }
-
-        return {
-          echoes: newEchoes,
-          inventory: {
-            ...state.inventory,
-            materials: newMaterials,
-            reeds: newReeds
-          }
-        };
+      set({
+        abilityUpgrades: {
+          chosenPath: currentLevelIndex === 0 ? path! : upgrades.chosenPath,
+          currentLevel: currentLevelIndex + 1,
+          unlocked: true,
+        },
+        _cachedAbilityStats: null,
       });
 
       return true;
     },
 
-    // ============= DUNGEON UPGRADES =============
-
-    // Get the current dungeon time limit (base 20 + bonus)
-    getDungeonTimeLimit: () => {
-      return GAME_CONFIG.BASE_DUNGEON_TIME + get().dungeonTimeBonus;
+    getAbilityUpgradeStats: () => {
+      return calculateAbilityUpgradeStats(get().abilityUpgrades);
     },
 
-    // Calculate the cost for the next dungeon time upgrade
-    getNextDungeonUpgradeCost: () => {
-      const currentBonus = get().dungeonTimeBonus;
-      const currentTotal = 20 + currentBonus;
-
-      // Calculate which upgrade level we're at (0 = no upgrades yet)
-      // Each upgrade adds 11 seconds until 108, then 12 seconds
-      let level = 0;
-      let total = 20;
-      while (total < currentTotal) {
-        level++;
-        total += (total < 108) ? 11 : 12;
-      }
-
-      // Cost formula: valves = 10 + (level * 5), heavyValves = level + 1
-      const valves = 10 + (level * 5);
-      const heavyValves = level + 1;
-
-      // Next upgrade gives 11 seconds if current total < 97, else 12
-      const timeIncrease = currentTotal < 97 ? 11 : 12;
-
-      return { valves, heavyValves, timeIncrease };
-    },
-
-    // Upgrade dungeon time - returns true if successful
-    upgradeDungeonTime: () => {
-      const state = get();
-      const cost = state.getNextDungeonUpgradeCost();
-
-      // Check if player has enough materials
-      const valves = state.inventory.materials.valves || 0;
-      const heavyValves = state.inventory.materials.heavy_valves || 0;
-
-      if (valves < cost.valves || heavyValves < cost.heavyValves) {
-        console.log('Not enough materials for dungeon time upgrade');
-        return false;
-      }
-
-      // Deduct materials and add bonus time
-      set((state) => ({
-        dungeonTimeBonus: state.dungeonTimeBonus + cost.timeIncrease,
-        inventory: {
-          ...state.inventory,
-          materials: {
-            ...state.inventory.materials,
-            valves: state.inventory.materials.valves - cost.valves,
-            heavy_valves: state.inventory.materials.heavy_valves - cost.heavyValves,
-          }
-        }
-      }));
-
-      console.log(`Upgraded dungeon time! New limit: ${get().getDungeonTimeLimit()} seconds`);
-      return true;
-    },
-
-    // === LIGATURE SYSTEM ===
-
-    // Get current ligature bonuses (for UI display)
-    getLigatureBonus: () => {
-      const state = get();
-      if (!state.equippedLigature) {
-        return { longToneDurationMs: 0, lowBrassDefense: 0 };
-      }
-      const stats = getLigatureStats(state.equippedLigature.id, state.equippedLigature.level);
-      return {
-        longToneDurationMs: stats.longToneBonus * 1000,
-        lowBrassDefense: stats.lowBrassDefense
-      };
-    },
-
-    // Equip a ligature from inventory by index
-    equipLigature: (ligatureIndex) => {
-      const state = get();
-      const ligature = state.inventory.ligatures[ligatureIndex];
-      if (!ligature) {
-        console.log('No ligature at index', ligatureIndex);
-        return;
-      }
-      set({ equippedLigature: ligature });
-      console.log(`Equipped ${getLigatureData(ligature.id).name} (Level ${ligature.level})`);
-    },
-
-    // Unequip current ligature
-    unequipLigature: () => {
-      set({ equippedLigature: null });
-      console.log('Unequipped ligature');
-    },
-
-    // Craft a new ligature at level 1
-    craftLigature: (ligatureId) => {
-      const state = get();
-      const ligatureData = getLigatureData(ligatureId);
-      if (!ligatureData) return false;
-
-      // Find the crafting recipe
-      const recipe = ALL_RECIPES.find(r => r.id === `ligature_${ligatureId}_craft`);
-      if (!recipe) return false;
-
-      // Check if we have enough materials
-      for (const ing of recipe.ingredients) {
-        const materialId = ing.itemId as MaterialItemId;
-        const have = state.inventory.materials[materialId] || 0;
-        if (have < ing.quantity) {
-          console.log(`Not enough ${materialId}: have ${have}, need ${ing.quantity}`);
-          return false;
-        }
-      }
-
-      // Deduct materials
-      const newMaterials = { ...state.inventory.materials };
-      for (const ing of recipe.ingredients) {
-        const materialId = ing.itemId as MaterialItemId;
-        newMaterials[materialId] = (newMaterials[materialId] || 0) - ing.quantity;
-      }
-
-      // Add ligature to inventory
-      const newLigature: LigatureInstance = { id: ligatureId, level: 1 };
-      const newLigatures = [...state.inventory.ligatures, newLigature];
-
-      set({
-        inventory: {
-          ...state.inventory,
-          materials: newMaterials,
-          ligatures: newLigatures
-        }
-      });
-
-      console.log(`Crafted ${ligatureData.name} at Level 1!`);
-      return true;
-    },
-
-    // Upgrade an existing ligature to the next level
-    upgradeLigature: (ligatureIndex) => {
-      const state = get();
-      const ligature = state.inventory.ligatures[ligatureIndex];
-      if (!ligature) {
-        console.log('No ligature at index', ligatureIndex);
-        return false;
-      }
-
-      // Check if already max level
-      if (ligature.level >= 10) {
-        console.log('Ligature already at max level (10)');
-        return false;
-      }
-
-      const nextLevel = ligature.level + 1;
-      const ligatureData = getLigatureData(ligature.id);
-
-      // Find upgrade recipe for the next level
-      const recipe = ALL_RECIPES.find(r => r.id === `ligature_${ligature.id}_upgrade_${nextLevel}`);
-      if (!recipe) {
-        console.log('No upgrade recipe found for level', nextLevel);
-        return false;
-      }
-
-      // Check if we have enough materials
-      for (const ing of recipe.ingredients) {
-        const materialId = ing.itemId as MaterialItemId;
-        const have = state.inventory.materials[materialId] || 0;
-        if (have < ing.quantity) {
-          console.log(`Not enough ${materialId}: have ${have}, need ${ing.quantity}`);
-          return false;
-        }
-      }
-
-      // Deduct materials
-      const newMaterials = { ...state.inventory.materials };
-      for (const ing of recipe.ingredients) {
-        const materialId = ing.itemId as MaterialItemId;
-        newMaterials[materialId] = (newMaterials[materialId] || 0) - ing.quantity;
-      }
-
-      // Update ligature level
-      const newLigatures = [...state.inventory.ligatures];
-      newLigatures[ligatureIndex] = { ...ligature, level: nextLevel };
-
-      // If this was the equipped ligature, update that too
-      let newEquipped = state.equippedLigature;
-      if (newEquipped && newEquipped.id === ligature.id && newEquipped.level === ligature.level) {
-        newEquipped = { ...newEquipped, level: nextLevel };
-      }
-
-      set({
-        equippedLigature: newEquipped,
-        inventory: {
-          ...state.inventory,
-          materials: newMaterials,
-          ligatures: newLigatures
-        }
-      });
-
-      console.log(`Upgraded ${ligatureData.name} to Level ${nextLevel}!`);
-      return true;
-    },
-
-    // === MOUTHPIECE ACTIONS ===
-    equipMouthpiece: (mouthpieceIndex: number) => {
-      const state = get();
-      const mouthpiece = state.inventory.mouthpieces[mouthpieceIndex];
-      if (!mouthpiece) return;
-
-      // Calculate new crit stats with mouthpiece equipped
-      const mouthpieceBonus = getMouthpieceStats(mouthpiece.id, mouthpiece.level);
-      const baseStats = calculateStats(state.level, state.equippedReed, state.embouchure);
-
-      set({
-        equippedMouthpiece: mouthpiece,
-        critFactor: 1.5 + mouthpieceBonus.critFactor,
-        critChance: baseStats.critChance + mouthpieceBonus.critChance
-      });
-    },
-
-    unequipMouthpiece: () => {
-      const state = get();
-      const baseStats = calculateStats(state.level, state.equippedReed, state.embouchure);
-      set({
-        equippedMouthpiece: null,
-        critFactor: 1.5, // Reset to base
-        critChance: baseStats.critChance // Reset to base (without mouthpiece bonus)
-      });
-    },
-
-    craftMouthpiece: (mouthpieceId: MouthpieceId) => {
-      const state = get();
-      const mouthpieceData = getMouthpieceData(mouthpieceId);
-
-      // Check if we have enough materials
-      for (const ing of mouthpieceData.recipe) {
-        const materialId = ing.itemId as MaterialItemId;
-        const have = state.inventory.materials[materialId] || 0;
-        if (have < ing.quantity) {
-          console.log(`Not enough ${materialId}: have ${have}, need ${ing.quantity}`);
-          return false;
-        }
-      }
-
-      // Deduct materials
-      const newMaterials = { ...state.inventory.materials };
-      for (const ing of mouthpieceData.recipe) {
-        const materialId = ing.itemId as MaterialItemId;
-        newMaterials[materialId] = (newMaterials[materialId] || 0) - ing.quantity;
-      }
-
-      // Add new mouthpiece at level 1
-      const newMouthpieces = [...state.inventory.mouthpieces, { id: mouthpieceId, level: 1 }];
-
-      set({
-        inventory: {
-          ...state.inventory,
-          materials: newMaterials,
-          mouthpieces: newMouthpieces
-        }
-      });
-
-      console.log(`Crafted ${mouthpieceData.name} at Level 1!`);
-      return true;
-    },
-
-    upgradeMouthpiece: (mouthpieceIndex: number) => {
-      const state = get();
-      const mouthpiece = state.inventory.mouthpieces[mouthpieceIndex];
-      if (!mouthpiece) return false;
-
-      const nextLevel = mouthpiece.level + 1;
-      if (nextLevel > 10) {
-        console.log('Mouthpiece is already max level');
-        return false;
-      }
-
-      // Get upgrade cost (level * base cost)
-      const upgradeCost = getMouthpieceUpgradeCost(mouthpiece.id, mouthpiece.level);
-
-      // Check if we have enough materials
-      for (const ing of upgradeCost) {
-        const materialId = ing.itemId as MaterialItemId;
-        const have = state.inventory.materials[materialId] || 0;
-        if (have < ing.quantity) {
-          console.log(`Not enough ${materialId}: have ${have}, need ${ing.quantity}`);
-          return false;
-        }
-      }
-
-      // Deduct materials
-      const newMaterials = { ...state.inventory.materials };
-      for (const ing of upgradeCost) {
-        const materialId = ing.itemId as MaterialItemId;
-        newMaterials[materialId] = (newMaterials[materialId] || 0) - ing.quantity;
-      }
-
-      // Update mouthpiece level
-      const newMouthpieces = [...state.inventory.mouthpieces];
-      newMouthpieces[mouthpieceIndex] = { ...mouthpiece, level: nextLevel };
-
-      // If this was the equipped mouthpiece, update stats
-      let newEquipped = state.equippedMouthpiece;
-      let newCritFactor = state.critFactor;
-      let newCritChance = state.critChance;
-
-      if (newEquipped && newEquipped.id === mouthpiece.id && newEquipped.level === mouthpiece.level) {
-        newEquipped = { ...newEquipped, level: nextLevel };
-        const mouthpieceBonus = getMouthpieceStats(newEquipped.id, nextLevel);
-        const baseStats = calculateStats(state.level, state.equippedReed, state.embouchure);
-        newCritFactor = 1.5 + mouthpieceBonus.critFactor;
-        newCritChance = baseStats.critChance + mouthpieceBonus.critChance;
-      }
-
-      set({
-        equippedMouthpiece: newEquipped,
-        critFactor: newCritFactor,
-        critChance: newCritChance,
-        inventory: {
-          ...state.inventory,
-          materials: newMaterials,
-          mouthpieces: newMouthpieces
-        }
-      });
-
-      const mouthpieceData = getMouthpieceData(mouthpiece.id);
-      console.log(`Upgraded ${mouthpieceData.name} to Level ${nextLevel}!`);
-      return true;
-    },
-
-    getMouthpieceBonus: () => {
-      const state = get();
-      if (!state.equippedMouthpiece) {
-        return { critFactor: 0, critChance: 0 };
-      }
-      return getMouthpieceStats(state.equippedMouthpiece.id, state.equippedMouthpiece.level);
-    },
-
-    // === CLASS SELECTION ===
-    setPlayerClass: (playerClass) => {
-      set({ playerClass });
-      console.log(`Player class set to: ${playerClass}`);
+    isAbilityUpgradesUnlocked: () => {
+      return get().level >= ABILITY_UPGRADES_UNLOCK_LEVEL;
     },
   }))
 );

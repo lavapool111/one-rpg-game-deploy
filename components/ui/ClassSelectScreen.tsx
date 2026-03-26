@@ -5,8 +5,8 @@ import { useState, useEffect } from 'react';
 import { PlayerClass, CLASS_INFO } from '@/lib/store/playerStore';
 
 export function ClassSelectScreen() {
-    const { setGameState } = useGameStore();
-    const { setPlayerClass } = usePlayerStore();
+    const setGameState = useGameStore((state) => state.setGameState);
+    const setPlayerClass = usePlayerStore((state) => state.setPlayerClass);
     const [isVisible, setIsVisible] = useState(false);
     const [selectedClass, setSelectedClass] = useState<PlayerClass | null>(null);
 
@@ -48,8 +48,8 @@ export function ClassSelectScreen() {
                             key={cls}
                             onClick={() => handleSelectClass(cls)}
                             className={`relative w-72 p-6 rounded-xl border-2 transition-all duration-300 text-left ${isSelected
-                                    ? 'border-yellow-500 bg-yellow-900/30 shadow-[0_0_30px_rgba(234,179,8,0.3)] scale-105'
-                                    : 'border-slate-600 bg-slate-800/50 hover:border-slate-400 hover:bg-slate-800'
+                                ? 'border-yellow-500 bg-yellow-900/30 shadow-[0_0_30px_rgba(234,179,8,0.3)] scale-105'
+                                : 'border-slate-600 bg-slate-800/50 hover:border-slate-400 hover:bg-slate-800'
                                 }`}
                         >
                             {/* Selection indicator */}
@@ -89,8 +89,8 @@ export function ClassSelectScreen() {
                 onClick={handleConfirm}
                 disabled={!selectedClass}
                 className={`px-8 py-4 rounded font-bold uppercase tracking-wider text-lg transition-all duration-300 ${selectedClass
-                        ? 'bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600 text-slate-950 shadow-[0_0_30px_rgba(234,179,8,0.3)]'
-                        : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                    ? 'bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600 text-slate-950 shadow-[0_0_30px_rgba(234,179,8,0.3)]'
+                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                     }`}
             >
                 {selectedClass ? `Begin as ${CLASS_INFO[selectedClass].name}` : 'Select an Instrument'}

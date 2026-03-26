@@ -5,15 +5,13 @@ import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls as DreiPointerLockControls } from '@react-three/drei';
 import { Vector3, Euler, MathUtils } from 'three';
 import { useGameStore, usePlayerStore } from '@/lib/store';
+import { useAccessoryStore } from '@/lib/store/accessoryStore';
+import { GAME_CONFIG } from '@/lib/game/config';
 import { Pillar } from '@/lib/game/pillars';
-import {
-    DUNGEON_HUB_WIDTH,
-    DUNGEON_HUB_DEPTH,
-    DUNGEON_CORRIDOR_WIDTH,
-    DUNGEON_CORRIDOR_LENGTH,
-    isValidDungeonPosition
-} from '@/lib/game/collision';
-import { getFloorHeightAt } from '@/lib/game/stairCollision';
+import { isValidDungeonPosition } from '@/lib/game/collision';
+import { isValidBandRoomPosition } from '@/lib/game/bandRoomCollision';
+import { ALTAR_ROOM_CENTER_Z } from './AltarRoom';
+import { getFloorHeightAt, isCollidingWithObstacle } from '@/lib/game/stairCollision';
 
 /**
  * FirstPersonController
@@ -50,7 +48,7 @@ interface FirstPersonControllerProps {
 }
 
 // Movement state tracking
-interface MovementState {
+interface _MovementState {
     forward: boolean;
     backward: boolean;
     left: boolean;
@@ -68,8 +66,6 @@ const DEFAULT_ARENA_RADIUS = 375; // meters (matching BandRoom)
 const DEFAULT_COLLISION_MARGIN = 3; // meters from wall
 const MOUSE_SENSITIVITY = 0.002;
 const TOUCH_SENSITIVITY = 0.003;
-const WALK_SPEED = 4.5;
-const SPRINT_SPEED = 9.0;
 
 export function FirstPersonController({
     speed = DEFAULT_SPEED,
@@ -103,8 +99,8 @@ export function FirstPersonController({
     // Jump physics state
     const verticalVelocity = useRef(0);
     const isGrounded = useRef(true);
-    const GRAVITY = 30; // ft/s^2
-    const JUMP_FORCE = 12; // ft/s initial velocity
+    const GRAVITY = GAME_CONFIG.GRAVITY;
+    const JUMP_FORCE = GAME_CONFIG.STARTING_JUMP_FORCE;
 
     // Detect mobile device
     useEffect(() => {
@@ -115,6 +111,29 @@ export function FirstPersonController({
         window.addEventListener('resize', checkMobile);
         return () => window.removeEventListener('resize', checkMobile);
     }, []);
+
+    // Handle pointer lock events and errors
+    useEffect(() => {
+        const handlePointerLockChange = () => {
+            const locked = document.pointerLockElement === gl.domElement;
+            setIsLocked(locked);
+            onLockChange?.(locked);
+        };
+
+        const handlePointerLockError = (event: Event) => {
+            console.warn('Pointer lock failed:', event);
+            setIsLocked(false);
+            onLockChange?.(false);
+        };
+
+        document.addEventListener('pointerlockchange', handlePointerLockChange);
+        document.addEventListener('pointerlockerror', handlePointerLockError);
+
+        return () => {
+            document.removeEventListener('pointerlockchange', handlePointerLockChange);
+            document.removeEventListener('pointerlockerror', handlePointerLockError);
+        };
+    }, [gl.domElement, onLockChange]);
 
     // Game State for respawn handling
     const gameState = useGameStore((state) => state.gameState);
@@ -127,7 +146,9 @@ export function FirstPersonController({
     useEffect(() => {
         // If transitioning to 'playing' from 'gameOver' or 'menu', reset position to center
         if ((prevGameState.current === 'gameOver' || prevGameState.current === 'menu') && gameState === 'playing') {
-            camera.position.set(0, eyeLevel, 0);
+            const savedPos = usePlayerStore.getState().position;
+            const savedY = savedPos && savedPos[1] !== 0 ? savedPos[1] : eyeLevel;
+            camera.position.set(savedPos ? savedPos[0] : 0, savedY, savedPos ? savedPos[2] : 0);
             camera.rotation.set(0, Math.PI, 0); // Reset rotation to look opposite way (South/Audience?)
         }
         prevGameState.current = gameState;
@@ -144,7 +165,8 @@ export function FirstPersonController({
             console.log('Initial mount: hydrating position to', savedPosition);
 
             if (savedPosition && (savedPosition[0] !== 0 || savedPosition[2] !== 0)) {
-                camera.position.set(savedPosition[0], eyeLevel, savedPosition[2]);
+                const savedY = savedPosition[1] !== 0 ? savedPosition[1] : eyeLevel;
+                camera.position.set(savedPosition[0], savedY, savedPosition[2]);
             } else {
                 // If 0,0,0 (default), maybe force eye level just in case
                 camera.position.set(0, eyeLevel, 0);
@@ -158,6 +180,30 @@ export function FirstPersonController({
         }
     }, [gameState]); // Run when gameState changes (e.g. menu -> playing)
 
+    // Listen for external teleports from the store (e.g. debug shortcuts or boss transitions)
+    useEffect(() => {
+        return usePlayerStore.subscribe(
+            state => state.position,
+            (newPos) => {
+                // If the camera is far from the new store position, it was an external teleport
+                const dx = camera.position.x - newPos[0];
+                const dy = camera.position.y - newPos[1];
+                const dz = camera.position.z - newPos[2];
+                const distSq = dx * dx + dy * dy + dz * dz;
+
+                // If jumping more than 1ft, sync camera to store and temporarily disable frame-sync
+                if (distSq > 1.0) {
+                    console.log('External teleport detected, syncing camera to:', newPos);
+                    camera.position.set(newPos[0], newPos[1], newPos[2]);
+                    skipPositionSync.current = true;
+                    setTimeout(() => {
+                        skipPositionSync.current = false;
+                    }, 50);
+                }
+            }
+        );
+    }, [camera]);
+
     // On mount: hydrate position and disable sync temporarily
     useEffect(() => {
         // Skip sync on mount to prevent frame from overwriting store position
@@ -165,7 +211,8 @@ export function FirstPersonController({
 
         const savedPosition = usePlayerStore.getState().position;
         console.log('Component mounted: hydrating to', savedPosition);
-        camera.position.set(savedPosition[0], eyeLevel, savedPosition[2]);
+        const savedY = savedPosition[1] !== 0 ? savedPosition[1] : eyeLevel;
+        camera.position.set(savedPosition[0], savedY, savedPosition[2]);
 
         // Re-enable sync after mount settles
         setTimeout(() => {
@@ -178,6 +225,7 @@ export function FirstPersonController({
     // Keyboard event handlers
     const handleKeyDown = useCallback((event: KeyboardEvent) => {
         if (!enabled) return;
+        if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
         keys.current.add(event.code);
     }, [enabled]);
 
@@ -185,29 +233,16 @@ export function FirstPersonController({
         keys.current.delete(event.code);
     }, []);
 
-    // Pointer lock change handler
-    const handleLockChange = useCallback(() => {
-        const locked = document.pointerLockElement === gl.domElement;
-        setIsLocked(locked);
-        onLockChange?.(locked);
-    }, [gl.domElement, onLockChange]);
-
-    // Set up event listeners
+    // Set up event listeners for keyboard
     useEffect(() => {
         document.addEventListener('keydown', handleKeyDown);
         document.addEventListener('keyup', handleKeyUp);
-        document.addEventListener('pointerlockchange', handleLockChange);
 
         return () => {
             document.removeEventListener('keydown', handleKeyDown);
             document.removeEventListener('keyup', handleKeyUp);
-            document.removeEventListener('pointerlockchange', handleLockChange);
         };
-    }, [
-        handleKeyDown,
-        handleKeyUp,
-        handleLockChange,
-    ]);
+    }, [handleKeyDown, handleKeyUp]);
 
     // Current location for collision mode
     const currentLocation = useGameStore((state) => state.currentLocation);
@@ -230,7 +265,7 @@ export function FirstPersonController({
             console.log('Location changed to', currentLocation, '- teleporting to', targetPosition);
 
             // Teleport camera immediately
-            camera.position.set(targetPosition[0], eyeLevel, targetPosition[2]);
+            camera.position.set(targetPosition[0], targetPosition[1], targetPosition[2]);
 
             // Update tracking
             prevLocation.current = currentLocation;
@@ -246,8 +281,11 @@ export function FirstPersonController({
         }
     }, [currentLocation, camera, eyeLevel, gameState]);
 
-    useFrame((state, delta) => {
+    useFrame((_state, delta) => {
         if (!enabled) return;
+
+        // Cap delta to prevent extreme movement during lag spikes or tab switching
+        const safeDelta = Math.min(delta, 0.1);
 
         // Check for location desync (Store updated but component hasn't re-rendered yet)
         // This prevents overwriting the store position with stale coordinates during transition
@@ -255,13 +293,13 @@ export function FirstPersonController({
 
         // Tick reed durability
         if (gameState === 'playing') {
-            usePlayerStore.getState().tickReedDurability(delta);
+            useAccessoryStore.getState().tickReedDurability(delta);
 
             // Anti-camping: Reset tempo if idle for 30s
             const playerState = usePlayerStore.getState();
             const idleTime = Date.now() - playerState.lastMoveTime;
             if (idleTime > 30000 && playerState.tempo > 0) {
-                usePlayerStore.setState({ tempo: 0, tempoRating: 'F' });
+                usePlayerStore.setState({ tempo: 0, rating: 'F' });
             }
         }
 
@@ -352,69 +390,34 @@ export function FirstPersonController({
             // If stunned, skip all movement processing
             if (isStunned) return;
 
-            // Apply speed modifier to base speed
-            const currentSpeed = (isSprinting ? SPRINT_SPEED : WALK_SPEED) * speedModifier;
-            velocity.current.copy(direction.current).multiplyScalar(currentSpeed * delta);
+            // Apply speed modifier to base speed (using dynamic player stat instead of hardcode)
+            const playerSpeedStat = playerState.speed;
+            const currentSpeed = (isSprinting ? playerSpeedStat * GAME_CONFIG.SPRINT_FACTOR : playerSpeedStat) * speedModifier;
+            velocity.current.copy(direction.current).multiplyScalar(currentSpeed * safeDelta);
 
             // Apply horizontal movement
             newPosition.add(velocity.current);
 
-            // ========== BAND ROOM ARENA COLLISION (skip in dungeon) ==========
-            if (currentLocation !== 'backstage_halls') {
-                // Collision detection - keep player within arena bounds
-                const distanceFromCenter = Math.sqrt(
-                    newPosition.x * newPosition.x + newPosition.z * newPosition.z
-                );
-                const maxDistance = arenaRadius - collisionMargin;
+            // ========== BAND ROOM & ALTAR ROOM COLLISION ==========
+            if (currentLocation === 'band_room') {
+                const buffer = 0.5;
+                if (!isValidBandRoomPosition(newPosition.x, newPosition.z, buffer)) {
+                    // Try sliding - check if X movement alone is valid
+                    const xOnlyValid = isValidBandRoomPosition(newPosition.x, camera.position.z, buffer);
+                    // Check if Z movement alone is valid
+                    const zOnlyValid = isValidBandRoomPosition(camera.position.x, newPosition.z, buffer);
 
-                // Corridor exception zones - allow walking into the 4 corridors
-                const corridorWidth = 10;
-                const corridorLength = 200;
-                const halfWidth = corridorWidth / 2; // Corridor half-width (5m)
-                const wallBuffer = 0.5; // Player can't get within 0.5m of wall
-
-                // Check if player is in a corridor zone (within the corridor entrance width)
-                // Allow full length + small buffer to ensure we don't snap out before hitting the wall
-                const isInNorthCorridor = newPosition.z > arenaRadius - 15 && Math.abs(newPosition.x) < halfWidth && newPosition.z < arenaRadius + corridorLength + 5;
-                const isInSouthCorridor = newPosition.z < -(arenaRadius - 15) && Math.abs(newPosition.x) < halfWidth && newPosition.z > -(arenaRadius + corridorLength + 5);
-                const isInEastCorridor = newPosition.x > arenaRadius - 15 && Math.abs(newPosition.z) < halfWidth && newPosition.x < arenaRadius + corridorLength + 5;
-                const isInWestCorridor = newPosition.x < -(arenaRadius - 15) && Math.abs(newPosition.z) < halfWidth && newPosition.x > -(arenaRadius + corridorLength + 5);
-
-                const isInCorridor = isInNorthCorridor || isInSouthCorridor || isInEastCorridor || isInWestCorridor;
-
-                if (distanceFromCenter > maxDistance && !isInCorridor) {
-                    // Slide along the wall instead of stopping completely
-                    const angle = Math.atan2(newPosition.z, newPosition.x);
-                    newPosition.x = Math.cos(angle) * maxDistance;
-                    newPosition.z = Math.sin(angle) * maxDistance;
-                }
-
-                // Corridor wall collision - keep player within corridor bounds (tighter collision)
-                const corridorBound = halfWidth - wallBuffer;
-                // Stop before end wall (corridor extends 200m, but we only block slight visual clipping)
-                // Overlap is 1m. Length is 200m. End is at Radius + 199.
-                // Let's allow walking to Radius + 197 (2m buffer)
-                const endWallBound = arenaRadius + corridorLength - 3;
-
-                if (isInNorthCorridor) {
-                    newPosition.x = Math.max(-corridorBound, Math.min(corridorBound, newPosition.x));
-                    // Prevent going past end wall
-                    newPosition.z = Math.min(endWallBound, newPosition.z);
-                }
-                if (isInSouthCorridor) {
-                    newPosition.x = Math.max(-corridorBound, Math.min(corridorBound, newPosition.x));
-                    // Door is at the END of the corridor: -(arenaRadius + corridorLength - 5)
-                    // Stop player about 3 feet before the door face
-                    const doorBound = arenaRadius + corridorLength - 8;
-                    newPosition.z = Math.max(-doorBound, newPosition.z);
-                }
-                if (isInEastCorridor) {
-                    newPosition.z = Math.max(-corridorBound, Math.min(corridorBound, newPosition.z));
-                    newPosition.x = Math.min(endWallBound, newPosition.x);
-                }
-                if (isInWestCorridor) {
-                    newPosition.z = Math.max(-corridorBound, Math.min(corridorBound, newPosition.z));
-                    newPosition.x = Math.max(-endWallBound, newPosition.x);
+                    if (xOnlyValid) {
+                        // Slide along X
+                        newPosition.z = camera.position.z;
+                    } else if (zOnlyValid) {
+                        // Slide along Z
+                        newPosition.x = camera.position.x;
+                    } else {
+                        // Both axes blocked, full stop
+                        newPosition.x = camera.position.x;
+                        newPosition.z = camera.position.z;
+                    }
                 }
             }
 
@@ -446,30 +449,57 @@ export function FirstPersonController({
                 }
             }
 
+            // Obstacle collision detection (e.g. Vaults)
+            const playerRadius = 0.5; // Player collision radius
+            const playerHeight = 5.0; // Player collision height
+            const playerFeetY = camera.position.y - eyeLevel;
+
+            // Check if New Position collides with obstacles
+            if (isCollidingWithObstacle(newPosition.x, playerFeetY, newPosition.z, playerRadius, playerHeight)) {
+                // Try X axis only
+                if (!isCollidingWithObstacle(newPosition.x, playerFeetY, camera.position.z, playerRadius, playerHeight)) {
+                    newPosition.z = camera.position.z;
+                }
+                // Try Z axis only
+                else if (!isCollidingWithObstacle(camera.position.x, playerFeetY, newPosition.z, playerRadius, playerHeight)) {
+                    newPosition.x = camera.position.x;
+                }
+                // Block both
+                else {
+                    newPosition.x = camera.position.x;
+                    newPosition.z = camera.position.z;
+                }
+            }
+
             // Pillar collision detection - prevent movement into pillars
             if (pillars.length > 0) {
                 const playerRadius = 0.5; // Player collision radius
-                // Check each pillar for collision
-                for (const pillar of pillars) {
-                    // Use base radius (1.5x shaft radius) since base is larger than the shaft
-                    const baseRadius = pillar.radius * 1.5;
-                    const minDist = baseRadius + playerRadius + pillarCollisionPadding;
 
-                    // Calculate distance from new position to pillar center
-                    const dx = newPosition.x - pillar.x;
-                    const dz = newPosition.z - pillar.z;
-                    const distToPillar = Math.sqrt(dx * dx + dz * dz);
+                // Optimized check: only check pillars if within arena radius + buffer
+                const distFromCenterSq = newPosition.x * newPosition.x + newPosition.z * newPosition.z;
+                const bufferRadiusSq = (400) * (400); // Arena is 375m radius
 
-                    if (distToPillar < minDist) {
-                        // Would collide - push new position out to the boundary
-                        // Calculate direction from pillar center to player
-                        const pushDir = distToPillar > 0.001
-                            ? { x: dx / distToPillar, z: dz / distToPillar }
-                            : { x: 1, z: 0 }; // Fallback if at center
+                if (distFromCenterSq < bufferRadiusSq) {
+                    for (const pillar of pillars) {
+                        const baseRadius = pillar.radius * 1.5;
+                        const minDist = baseRadius + playerRadius + pillarCollisionPadding;
+                        const minDistSq = minDist * minDist;
 
-                        // Place player at minimum distance along this direction
-                        newPosition.x = pillar.x + pushDir.x * minDist;
-                        newPosition.z = pillar.z + pushDir.z * minDist;
+                        // Calculate squared distance from new position to pillar center
+                        const dx = newPosition.x - pillar.x;
+                        const dz = newPosition.z - pillar.z;
+                        const distToPillarSq = dx * dx + dz * dz;
+
+                        if (distToPillarSq < minDistSq) {
+                            // Only calculate sqrt if we actually collide
+                            const distToPillar = Math.sqrt(distToPillarSq);
+                            const pushDir = distToPillar > 0.001
+                                ? { x: dx / distToPillar, z: dz / distToPillar }
+                                : { x: 1, z: 0 };
+
+                            newPosition.x = pillar.x + pushDir.x * minDist;
+                            newPosition.z = pillar.z + pushDir.z * minDist;
+                        }
                     }
                 }
             }
@@ -483,13 +513,15 @@ export function FirstPersonController({
         }
 
         // Query dynamic floor height from stair/platform registry
-        const dynamicFloorY = getFloorHeightAt(newPosition.x, newPosition.z, camera.position.y, 0.3, currentLocation);
+        // Higher step tolerance in the Altar Room area to allow walking up the steps
+        const stepTolerance = currentLocation === 'band_room' ? 1.2 : 0.3;
+        const dynamicFloorY = getFloorHeightAt(newPosition.x, newPosition.z, camera.position.y, stepTolerance, currentLocation);
         const currentFloorLevel = eyeLevel + dynamicFloorY; // Eye level above the floor
 
         // Apply gravity
         if (!isGrounded.current) {
-            verticalVelocity.current -= GRAVITY * delta;
-            newPosition.y = camera.position.y + verticalVelocity.current * delta;
+            verticalVelocity.current -= GRAVITY * safeDelta;
+            newPosition.y = camera.position.y + verticalVelocity.current * safeDelta;
 
             // Check for landing on floor or stairs
             if (newPosition.y <= currentFloorLevel) {
@@ -531,10 +563,11 @@ export function FirstPersonController({
     });
 
     // Render pointer lock controls for desktop
-    if (!isMobile && enabled) {
+    if (!isMobile && enabled && gameState === 'playing') {
         return (
             <DreiPointerLockControls
                 ref={controlsRef as React.Ref<any>}
+                enabled={true}
             />
         );
     }
@@ -550,11 +583,10 @@ export function useFirstPersonController() {
     const [isLocked, setIsLocked] = useState(false);
 
     useEffect(() => {
-        const handleChange = () => {
-            setIsLocked(!!document.pointerLockElement);
-        };
-        document.addEventListener('pointerlockchange', handleChange);
-        return () => document.removeEventListener('pointerlockchange', handleChange);
+        const updateLock = () => setIsLocked(!!document.pointerLockElement);
+        document.addEventListener('pointerlockchange', updateLock);
+        updateLock(); // Initial check
+        return () => document.removeEventListener('pointerlockchange', updateLock);
     }, []);
 
     return { isLocked };

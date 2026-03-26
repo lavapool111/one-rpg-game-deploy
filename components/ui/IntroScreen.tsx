@@ -10,34 +10,63 @@ const LORE_TEXT = [
     "You have not escaped. You remain trapped within the band room's endless expanse. But the choice is yours: endure the silence, or rise against the brass and reclaim the Stage. The music of freedom waits to be played—if you can survive the symphony of war."
 ];
 
+interface TypewriterTextProps {
+    text: string;
+    speed?: number;
+    delay?: number;
+    onComplete?: () => void;
+    className?: string;
+}
+
+function TypewriterText({ text, speed = 15, delay = 0, onComplete, className }: TypewriterTextProps) {
+    const [displayText, setDisplayText] = useState('');
+    const [isStarted, setIsStarted] = useState(false);
+
+    useEffect(() => {
+        const timer = setTimeout(() => setIsStarted(true), delay);
+        return () => clearTimeout(timer);
+    }, [delay]);
+
+    useEffect(() => {
+        if (!isStarted) return;
+
+        let currentIdx = 0;
+        const interval = setInterval(() => {
+            if (currentIdx < text.length) {
+                setDisplayText(text.substring(0, currentIdx + 1));
+                currentIdx++;
+            } else {
+                clearInterval(interval);
+                if (onComplete) onComplete();
+            }
+        }, speed);
+
+        return () => clearInterval(interval);
+    }, [isStarted, text, speed, onComplete]);
+
+    return <p className={className}>{displayText}</p>;
+}
+
 export function IntroScreen() {
     const { setGameState } = useGameStore();
     const [isVisible, setIsVisible] = useState(false);
-    const [currentParagraph, setCurrentParagraph] = useState(0);
-    const [showContinue, setShowContinue] = useState(false);
+    const [visibleParagraphs, setVisibleParagraphs] = useState<number>(0);
+    const [isTyping, setIsTyping] = useState(true);
 
     useEffect(() => {
-        // Fade in on mount
         setIsVisible(true);
-
-        // Reveal paragraphs one by one
-        const timers: NodeJS.Timeout[] = [];
-
-        LORE_TEXT.forEach((_, index) => {
-            if (index > 0) {
-                timers.push(setTimeout(() => {
-                    setCurrentParagraph(index);
-                }, index * 2500)); // 2.5 seconds between paragraphs
-            }
-        });
-
-        // Show continue button after all paragraphs
-        timers.push(setTimeout(() => {
-            setShowContinue(true);
-        }, LORE_TEXT.length * 2500));
-
-        return () => timers.forEach(clearTimeout);
     }, []);
+
+    const handleParagraphComplete = () => {
+        if (visibleParagraphs < LORE_TEXT.length - 1) {
+            // Wait a bit before starting the next paragraph
+            setTimeout(() => {
+                setVisibleParagraphs(prev => prev + 1);
+            }, 800);
+        } else {
+            setIsTyping(false);
+        }
+    };
 
     const handleContinue = () => {
         setIsVisible(false);
@@ -58,34 +87,52 @@ export function IntroScreen() {
             {/* Skip button */}
             <button
                 onClick={handleSkip}
-                className="absolute top-6 right-6 text-slate-500 hover:text-slate-300 text-sm uppercase tracking-wider transition-colors"
+                className="absolute top-6 right-6 text-slate-500 hover:text-slate-300 text-sm uppercase tracking-wider transition-colors z-10"
             >
                 Skip →
             </button>
 
             {/* Lore content */}
-            <div className="max-w-3xl px-8 space-y-6 text-center">
-                {LORE_TEXT.slice(0, currentParagraph + 1).map((paragraph, index) => (
-                    <p
-                        key={index}
-                        className={`text-lg md:text-xl leading-relaxed transition-all duration-1000 ${index === 0
-                            ? 'text-yellow-400 font-semibold text-2xl md:text-3xl'
-                            : 'text-slate-300'
-                            } ${index === currentParagraph ? 'opacity-100 animate-fade-in' : 'opacity-80'}`}
-                        style={{
-                            animationDelay: '0.2s',
-                        }}
-                    >
-                        {paragraph}
-                    </p>
-                ))}
+            <div className="max-w-3xl px-8 space-y-6 text-left">
+                {LORE_TEXT.map((paragraph, index) => {
+                    if (index > visibleParagraphs) return null;
+
+                    const isLastVisible = index === visibleParagraphs;
+
+                    if (isLastVisible && isTyping) {
+                        return (
+                            <TypewriterText
+                                key={index}
+                                text={paragraph}
+                                speed={index === 0 ? 60 : 35} // Slower for better readability
+                                onComplete={handleParagraphComplete}
+                                className={`text-lg md:text-xl leading-relaxed ${index === 0
+                                    ? 'text-yellow-400 font-semibold text-2xl md:text-3xl mb-4'
+                                    : 'text-slate-300'
+                                    }`}
+                            />
+                        );
+                    }
+
+                    return (
+                        <p
+                            key={index}
+                            className={`text-lg md:text-xl leading-relaxed transition-opacity duration-500 ${index === 0
+                                ? 'text-yellow-400 font-semibold text-2xl md:text-3xl mb-4'
+                                : 'text-slate-300 opacity-80'
+                                }`}
+                        >
+                            {paragraph}
+                        </p>
+                    );
+                })}
             </div>
 
             {/* Continue button */}
-            {showContinue && (
+            {!isTyping && (
                 <button
                     onClick={handleContinue}
-                    className="mt-12 px-8 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600 text-slate-950 font-bold uppercase tracking-wider text-lg transition-all duration-300 shadow-[0_0_30px_rgba(234,179,8,0.3)] hover:shadow-[0_0_40px_rgba(234,179,8,0.5)] animate-pulse"
+                    className="mt-12 px-8 py-4 bg-gradient-to-r from-yellow-600 to-yellow-700 hover:from-yellow-500 hover:to-yellow-600 text-slate-950 font-bold uppercase tracking-wider text-lg transition-all duration-300 shadow-[0_0_30px_rgba(234,179,8,0.3)] hover:shadow-[0_0_40px_rgba(234,179,8,0.5)] animate-fade-in"
                 >
                     Enter the Band Room
                 </button>

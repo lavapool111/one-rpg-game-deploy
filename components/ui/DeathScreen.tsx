@@ -1,7 +1,7 @@
 'use client';
 
 import { useGameStore, usePlayerStore } from '@/lib/store';
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 
 /**
  * DeathScreen Component
@@ -13,19 +13,25 @@ import { useEffect, useState, useCallback } from 'react';
  * - 3-second auto-respawn timer
  */
 export function DeathScreen() {
-    const { setGameState } = useGameStore();
-    const { respawn } = usePlayerStore();
+    const setGameState = useGameStore((state) => state.setGameState);
+    const respawn = usePlayerStore((state) => state.respawn);
     const [isVisible, setIsVisible] = useState(false);
     const [countdown, setCountdown] = useState(3);
 
+    const hasTriggered = useRef(false);
+
     // Auto-trigger respawn logic
     const handleRespawn = useCallback(() => {
+        if (hasTriggered.current) return;
+        hasTriggered.current = true;
+
         setIsVisible(false);
         // Short delay for fade-out before reset
         setTimeout(() => {
             respawn(); // Uses new respawn logic that keeps level/xp
+            setGameState('playing'); // Reset the game state!
         }, 500);
-    }, [respawn]);
+    }, [respawn, setGameState]);
 
     useEffect(() => {
         // Instant visibility

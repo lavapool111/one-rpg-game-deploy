@@ -2,11 +2,13 @@
 
 import { Canvas } from '@react-three/fiber';
 import { Stats } from '@react-three/drei';
-import { Suspense, useEffect, useMemo, useRef } from 'react';
-import { BackstageHalls, FirstPersonController, Player, useFirstPersonController } from '@/components/game';
+import { Suspense, useEffect, useRef } from 'react';
+import { FirstPersonController, Player, useFirstPersonController } from '@/components/game/everything';
 import { GameUI } from '@/components/ui';
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
 import { useAudioSettings } from '@/hooks/useAudioSettings';
+import { BackstageHalls } from '@/components/backstage-halls/BackstageHalls';
+import { setActiveConfig } from '@/lib/game/config';
 
 /**
  * Backstage Halls Demo Page
@@ -20,6 +22,7 @@ export default function BackstageHallsDemo() {
     const { isLocked } = useFirstPersonController();
     const { gameState, setGameState, enterDungeon, currentLocation, lastDungeonResult } = useGameStore();
     const speed = usePlayerStore((state) => state.speed);
+    const resetPlayer = usePlayerStore((state) => state.resetPlayer);
     const {
         graphics: { brightness, quality },
         controls: { mouseSensitivity },
@@ -29,6 +32,16 @@ export default function BackstageHallsDemo() {
 
     // Sync audio settings with AudioManager
     useAudioSettings();
+
+    // Activate backstage halls config and reinitialize player on mount
+    useEffect(() => {
+        setActiveConfig('backstage_halls');
+        resetPlayer();
+        return () => {
+            // Restore normal config when leaving this page
+            setActiveConfig('normal');
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Detect device on mount
     useEffect(() => {

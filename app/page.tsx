@@ -2,12 +2,16 @@
 
 import { Canvas } from '@react-three/fiber';
 import { Stats } from '@react-three/drei';
-import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { BandRoom, BackstageHalls, FirstPersonController, Player, EnemySpawner, CorridorSpawner, useFirstPersonController, SaveManager, TouchControls } from '@/components/game';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { BandRoom, FirstPersonController, Player, useFirstPersonController, SaveManager, TouchControls } from '@/components/game/everything';
+import { AltarManager } from '@/components/game/AltarManager';
+import { EnemySpawner, CorridorSpawner } from '@/components/enemies/everything';
+import { BackstageHalls } from '@/components/backstage-halls/BackstageHalls';
 import { GameUI } from '@/components/ui';
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
 import { generatePillars } from '@/lib/game/pillars';
 import { useAudioSettings } from '@/hooks/useAudioSettings';
+import { getFloorHeightAt } from '@/lib/game/stairCollision';
 
 /**
  * Main Game Page
@@ -20,7 +24,7 @@ import { useAudioSettings } from '@/hooks/useAudioSettings';
  */
 export default function Home() {
   const { isLocked } = useFirstPersonController();
-  const { gameState, setGameState, currentLocation } = useGameStore();
+  const { gameState, setGameState, currentLocation, isInAltarRoom } = useGameStore();
   const speed = usePlayerStore((state) => state.speed);
   const {
     graphics: { brightness, quality },
@@ -71,7 +75,7 @@ export default function Home() {
     : `rgba(255, 255, 255, ${(brightness - 50) / 50 * 0.3})`; // Lighten up to 30%
 
   // Determine which arena radius to use based on location
-  const activeArenaRadius = currentLocation === 'backstage_halls' ? 200 : ARENA_RADIUS;
+  const activeArenaRadius = currentLocation === 'backstage_halls' ? 350 : ARENA_RADIUS;
 
   return (
     <div className="w-full h-screen bg-black select-none">
@@ -100,12 +104,20 @@ export default function Home() {
         </div>
       )}
 
+      {/* DEBUG UI */}
+      <div className="absolute top-20 left-4 z-[100] bg-black/80 text-white p-2 text-xs font-mono pointer-events-none">
+        <DebugObstacles />
+      </div>
+
       {/* Crosshair - Visible when locked (Desktop) OR always when playing (Mobile) */}
       {(gameState === 'playing') && (isLocked || isMobile) && (
         <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-30">
           <div className="w-1.5 h-1.5 bg-white rounded-full opacity-60 mix-blend-difference shadow-[0_0_4px_rgba(255,255,255,0.8)]" />
         </div>
       )}
+
+      {/* Auto-Save Manager */}
+      <SaveManager />
 
       {/* 3D Scene */}
       <Canvas
@@ -137,26 +149,30 @@ export default function Home() {
                 wallHeight={50}
                 animatedLights={quality === 'high'}
                 quality={quality}
-              />
+              >
+                {/* Altar Room behind north corridor */}
+                {/* Repeating Altar Rooms and Logic */}
+                <AltarManager />
+              </BandRoom>
 
               {/* Enemy Spawner - 5 Trumpets every 60 seconds */}
               <EnemySpawner
                 arenaRadius={ARENA_RADIUS}
                 enemiesPerWave={5}
                 spawnInterval={60}
-                enabled={gameState === 'playing'}
+                enabled={gameState === 'playing' && !isInAltarRoom}
                 pillars={pillarConfig.pillars}
               />
 
               {/* Corridor Enemy Spawner */}
               <CorridorSpawner
                 arenaRadius={ARENA_RADIUS}
-                enabled={gameState === 'playing'}
+                enabled={gameState === 'playing' && !isInAltarRoom}
                 pillars={pillarConfig.pillars}
               />
 
-              {/* Fog for Band Room atmosphere */}
-              <fog attach="fog" args={['#1a1a2e', 50, 400]} />
+              {/* Fog for Band Room atmosphere - increased far plane for wall visibility */}
+              <fog attach="fog" args={['#1a1a2e', 100, 800]} />
             </>
           )}
 
@@ -167,8 +183,6 @@ export default function Home() {
             />
           )}
 
-          {/* Auto-Save Manager */}
-          <SaveManager />
         </Suspense>
       </Canvas>
 
@@ -176,4 +190,10 @@ export default function Home() {
       <Stats className="!absolute !bottom-4 !right-4 !top-auto" />
     </div>
   );
+}
+
+function DebugObstacles() {
+  // to kill function, removing it would kill everything :)
+  let one = null
+  return one
 }

@@ -2,12 +2,37 @@
 
 import { Canvas } from '@react-three/fiber';
 import { Stats } from '@react-three/drei';
-import { Suspense, useState, useCallback, useEffect, useMemo, useRef } from 'react';
-import { BandRoom, BackstageHalls, FirstPersonController, Player, EnemySpawner, CorridorSpawner, useFirstPersonController, SaveManager, TouchControls } from '@/components/game';
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { BandRoom, FirstPersonController, Player, useFirstPersonController, SaveManager, TouchControls } from '@/components/game/everything';
+import { BackstageHalls } from '@/components/backstage-halls/backstage';
+import { AltarRoom } from '@/components/game/AltarRoom';
+import { EnemySpawner, CorridorSpawner, AltarRoomWaveSpawner } from '@/components/enemies/everything';
 import { GameUI } from '@/components/ui';
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
 import { generatePillars } from '@/lib/game/pillars';
 import { useAudioSettings } from '@/hooks/useAudioSettings';
+
+import { getFloorHeightAt } from '@/lib/game/stairCollision';
+
+function DebugObstacles() {
+    const [altarHeight, setAltarHeight] = useState(0);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            const pos = usePlayerStore.getState().position;
+            if (pos) {
+                setAltarHeight(getFloorHeightAt(pos[0], pos[2], pos[1], 0.3, 'band_room'));
+            }
+        }, 100);
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <div className="absolute top-20 left-4 z-[100] bg-black/80 text-white p-2 text-xs font-mono pointer-events-none">
+            <div className="text-xl text-yellow-300">Live Altar Surface Y: {altarHeight}</div>
+        </div>
+    );
+}
 
 /**
  * Band Room Demo Page
@@ -87,6 +112,8 @@ export default function BandRoomDemo() {
             {/* Game UI Manager (HUD, Menus, Death Screen) */}
             <GameUI />
 
+            <DebugObstacles />
+
             {/* Mobile Touch Controls */}
             {gameState === 'playing' && isMobile && (
                 <TouchControls />
@@ -138,7 +165,12 @@ export default function BandRoomDemo() {
                                 wallHeight={50}
                                 animatedLights={quality === 'high'}
                                 quality={quality}
-                            />
+                            >
+                                {/* Altar Room behind north corridor */}
+                                <AltarRoom />
+                                {/* Manage Altar Room Enemy Waves */}
+                                {gameState === 'playing' && <AltarRoomWaveSpawner />}
+                            </BandRoom>
 
                             {/* Enemy Spawner - 5 Trumpets every 60 seconds */}
                             <EnemySpawner
@@ -156,8 +188,8 @@ export default function BandRoomDemo() {
                                 pillars={pillarConfig.pillars}
                             />
 
-                            {/* Fog for Band Room atmosphere */}
-                            <fog attach="fog" args={['#1a1a2e', 50, 400]} />
+                            {/* Fog for Band Room atmosphere - scaled up for 375m radius */}
+                            <fog attach="fog" args={['#1a1a2e', 150, 600]} />
                         </>
                     )}
 

@@ -1,8 +1,9 @@
 'use client';
 
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Group, Vector3 } from 'three';
+import * as THREE from 'three';
 import { usePlayerStore } from '@/lib/store';
 
 /**
@@ -138,21 +139,69 @@ function ClarinetModel() {
                 <meshStandardMaterial color={CLARINET_BODY_COLOR} roughness={0.3} metalness={0.1} />
             </mesh>
 
-            {/* Left side keys */}
-            {[0.35, 0.2, 0.05, -0.1, -0.25].map((yOffset, i) => (
-                <mesh key={`key-left-${i}`} position={[-CLARINET_RADIUS - 0.015, yOffset, 0]} rotation={[0, 0, Math.PI / 2]}>
-                    <cylinderGeometry args={[0.025, 0.025, 0.015, 8]} />
-                    <meshStandardMaterial color={KEY_COLOR} roughness={0.15} metalness={0.9} />
-                </mesh>
+            {/* === LEFT SIDE KEY MECHANISMS (lever arms + round pads) === */}
+            {[
+                { y: 0.35, padR: 0.022, armLen: 0.04 },
+                { y: 0.20, padR: 0.020, armLen: 0.035 },
+                { y: 0.05, padR: 0.022, armLen: 0.04 },
+                { y: -0.10, padR: 0.018, armLen: 0.03 },
+                { y: -0.25, padR: 0.020, armLen: 0.035 },
+            ].map((key, i) => (
+                <group key={`key-left-${i}`} position={[-CLARINET_RADIUS, key.y, 0]}>
+                    {/* Lever arm */}
+                    <mesh position={[-key.armLen / 2, 0, 0]} rotation={[0, 0, 0]}>
+                        <boxGeometry args={[key.armLen, 0.006, 0.008]} />
+                        <meshStandardMaterial color={KEY_COLOR} roughness={0.15} metalness={0.9} />
+                    </mesh>
+                    {/* Round pad at end */}
+                    <mesh position={[-key.armLen, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                        <cylinderGeometry args={[key.padR, key.padR, 0.005, 12]} />
+                        <meshStandardMaterial color={KEY_COLOR} roughness={0.2} metalness={0.85} />
+                    </mesh>
+                    {/* Hinge post */}
+                    <mesh position={[-0.003, 0, 0]}>
+                        <sphereGeometry args={[0.006, 6, 6]} />
+                        <meshStandardMaterial color={KEY_COLOR} roughness={0.2} metalness={0.9} />
+                    </mesh>
+                </group>
             ))}
 
-            {/* Right side keys */}
-            {[-0.2, -0.05, 0.1].map((yOffset, i) => (
-                <mesh key={`key-right-${i}`} position={[CLARINET_RADIUS + 0.015, yOffset, 0]} rotation={[0, 0, Math.PI / 2]}>
-                    <cylinderGeometry args={[0.018, 0.018, 0.01, 8]} />
-                    <meshStandardMaterial color={KEY_COLOR} roughness={0.15} metalness={0.9} />
-                </mesh>
+            {/* Left connecting rod (runs along body) */}
+            <mesh position={[-CLARINET_RADIUS - 0.005, 0.05, 0]}>
+                <cylinderGeometry args={[0.003, 0.003, 0.65, 6]} />
+                <meshStandardMaterial color={KEY_COLOR} roughness={0.15} metalness={0.9} />
+            </mesh>
+
+            {/* === RIGHT SIDE KEY MECHANISMS === */}
+            {[
+                { y: 0.10, padR: 0.016, armLen: 0.03 },
+                { y: -0.05, padR: 0.018, armLen: 0.035 },
+                { y: -0.20, padR: 0.016, armLen: 0.03 },
+            ].map((key, i) => (
+                <group key={`key-right-${i}`} position={[CLARINET_RADIUS, key.y, 0]}>
+                    {/* Lever arm */}
+                    <mesh position={[key.armLen / 2, 0, 0]}>
+                        <boxGeometry args={[key.armLen, 0.005, 0.007]} />
+                        <meshStandardMaterial color={KEY_COLOR} roughness={0.15} metalness={0.9} />
+                    </mesh>
+                    {/* Round pad */}
+                    <mesh position={[key.armLen, 0, 0]} rotation={[0, 0, Math.PI / 2]}>
+                        <cylinderGeometry args={[key.padR, key.padR, 0.005, 12]} />
+                        <meshStandardMaterial color={KEY_COLOR} roughness={0.2} metalness={0.85} />
+                    </mesh>
+                    {/* Hinge post */}
+                    <mesh position={[0.003, 0, 0]}>
+                        <sphereGeometry args={[0.005, 6, 6]} />
+                        <meshStandardMaterial color={KEY_COLOR} roughness={0.2} metalness={0.9} />
+                    </mesh>
+                </group>
             ))}
+
+            {/* Right connecting rod */}
+            <mesh position={[CLARINET_RADIUS + 0.005, -0.05, 0]}>
+                <cylinderGeometry args={[0.003, 0.003, 0.35, 6]} />
+                <meshStandardMaterial color={KEY_COLOR} roughness={0.15} metalness={0.9} />
+            </mesh>
 
             {/* Tone holes */}
             {[0.45, 0.32, 0.19, 0.06, -0.07, -0.2].map((yOffset, i) => (
@@ -185,6 +234,77 @@ function ClarinetModel() {
 
 /** Viola Model - Warm wooden string instrument with elegant curves */
 function ViolaModel() {
+    // Create the Viola body shape (hourglass)
+    const violaShape = useMemo(() => {
+        const shape = new THREE.Shape();
+        const w = VIOLA_WIDTH;
+        const h = VIOLA_HEIGHT * 0.6; // Body is roughly 60% of total height
+
+        // Start at middle-left (waist)
+        shape.moveTo(-w * 0.35, 0);
+
+        // Upper bout (top bulge)
+        shape.bezierCurveTo(
+            -w * 0.8, h * 0.2,   // control point 1
+            -w * 0.7, h * 0.5,   // control point 2
+            0, h * 0.5           // top center
+        );
+        shape.bezierCurveTo(
+            w * 0.7, h * 0.5,
+            w * 0.8, h * 0.2,
+            w * 0.35, 0
+        );
+
+        // Lower bout (bottom bulge)
+        shape.bezierCurveTo(
+            w * 0.9, -h * 0.3,
+            w * 0.8, -h * 0.6,
+            0, -h * 0.6
+        );
+        shape.bezierCurveTo(
+            -w * 0.8, -h * 0.6,
+            -w * 0.9, -h * 0.3,
+            -w * 0.35, 0
+        );
+
+        return shape;
+    }, []);
+
+    const extrudeSettings = useMemo(() => ({
+        depth: VIOLA_DEPTH,
+        bevelEnabled: true,
+        bevelThickness: 0.02,
+        bevelSize: 0.02,
+        bevelSegments: 5
+    }), []);
+
+    // Bridge Shape (thin, arched)
+    const bridgeShape = useMemo(() => {
+        const shape = new THREE.Shape();
+        const w = 0.08;
+        const h = 0.07;
+        shape.moveTo(-w / 2, 0);
+        shape.lineTo(w / 2, 0);
+        shape.lineTo(w / 2, h * 0.4);
+        shape.quadraticCurveTo(0, h, -w / 2, h * 0.4);
+        shape.closePath();
+        return shape;
+    }, []);
+
+    // Tailpiece Shape (tapered)
+    const tailpieceShape = useMemo(() => {
+        const shape = new THREE.Shape();
+        const wTop = 0.07;
+        const wBot = 0.03;
+        const h = 0.28;
+        shape.moveTo(-wTop / 2, h);
+        shape.lineTo(wTop / 2, h);
+        shape.lineTo(wBot / 2, 0);
+        shape.lineTo(-wBot / 2, 0);
+        shape.closePath();
+        return shape;
+    }, []);
+
     return (
         <>
             {/* === SCROLL (Top ornamental curl) === */}
@@ -207,69 +327,55 @@ function ViolaModel() {
                 </mesh>
             ))}
 
-            {/* === NECK - rounded cylinder === */}
-            <mesh position={[0, VIOLA_HEIGHT / 2 - 0.1, 0]}>
-                <cylinderGeometry args={[0.018, 0.022, 0.28, 12]} />
+            {/* === NECK === */}
+            <mesh position={[0, VIOLA_HEIGHT * 0.25, 0]}>
+                <cylinderGeometry args={[0.018, 0.022, 0.45, 12]} />
                 <meshStandardMaterial color={VIOLA_BODY_COLOR} roughness={0.35} />
             </mesh>
 
-            {/* Fingerboard (black, slightly rounded) */}
-            <mesh position={[0, VIOLA_HEIGHT / 2 - 0.1, 0.018]} scale={[1, 1, 0.3]}>
-                <cylinderGeometry args={[0.016, 0.02, 0.3, 8]} />
+            {/* Fingerboard */}
+            <mesh position={[0, VIOLA_HEIGHT * 0.25, 0.022]} scale={[1.1, 1, 0.3]}>
+                <cylinderGeometry args={[0.016, 0.02, 0.48, 8]} />
                 <meshStandardMaterial color={VIOLA_FINGERBOARD_COLOR} roughness={0.2} />
             </mesh>
 
-            {/* === MAIN BODY (Organic figure-8 using ellipsoids) === */}
-
-            {/* Upper bout - ellipsoid (smaller top bulge) */}
-            <mesh position={[0, 0.18, 0]} scale={[VIOLA_WIDTH * 1.8, 0.42, VIOLA_DEPTH * 1.2]}>
-                <sphereGeometry args={[0.5, 24, 16]} />
+            {/* === MAIN BODY (Extruded Shape) === */}
+            <mesh position={[0, 0, -VIOLA_DEPTH / 2]}>
+                <extrudeGeometry args={[violaShape, extrudeSettings]} />
                 <meshStandardMaterial color={VIOLA_BODY_COLOR} roughness={0.35} />
             </mesh>
 
-            {/* C-bout (waist) - narrower ellipsoid */}
-            <mesh position={[0, -0.02, 0]} scale={[VIOLA_WIDTH * 1.4, 0.2, VIOLA_DEPTH * 1.1]}>
-                <sphereGeometry args={[0.5, 24, 16]} />
-                <meshStandardMaterial color={VIOLA_BODY_COLOR} roughness={0.35} />
-            </mesh>
-
-            {/* Lower bout - larger ellipsoid (bottom bulge) */}
-            <mesh position={[0, -0.28, 0]} scale={[VIOLA_WIDTH * 2.2, 0.52, VIOLA_DEPTH * 1.3]}>
-                <sphereGeometry args={[0.5, 24, 16]} />
-                <meshStandardMaterial color={VIOLA_BODY_COLOR} roughness={0.35} />
-            </mesh>
-
-            {/* === F-HOLES (Sound holes) - curved slits === */}
-            {[-0.08, 0.08].map((x, i) => (
-                <mesh key={`f-hole-${i}`} position={[x, -0.15, VIOLA_DEPTH / 2 + 0.015]} rotation={[0, 0, i === 0 ? 0.25 : -0.25]} scale={[0.3, 1, 0.5]}>
-                    <capsuleGeometry args={[0.015, 0.08, 4, 8]} />
+            {/* === F-HOLES === */}
+            {[-0.09, 0.09].map((x, i) => (
+                <mesh key={`f-hole-${i}`} position={[x, -0.05, VIOLA_DEPTH / 2 + 0.01]} rotation={[0, 0, i === 0 ? 0.3 : -0.3]} scale={[0.4, 1.2, 0.5]}>
+                    <capsuleGeometry args={[0.015, 0.12, 4, 8]} />
                     <meshStandardMaterial color="#0a0a0a" />
                 </mesh>
             ))}
 
-            {/* === BRIDGE - curved top === */}
-            <mesh position={[0, -0.18, VIOLA_DEPTH / 2 + 0.02]} scale={[1, 0.7, 0.3]}>
-                <sphereGeometry args={[0.06, 12, 8]} />
+            {/* === BRIDGE === */}
+            <mesh position={[0, -0.06, VIOLA_DEPTH / 2 + 0.01]} rotation={[0, 0, 0]}>
+                <extrudeGeometry args={[bridgeShape, { depth: 0.01, bevelEnabled: false }]} />
                 <meshStandardMaterial color="#D2B48C" roughness={0.4} />
             </mesh>
 
-            {/* === STRINGS (4 strings) === */}
-            {[-0.022, -0.007, 0.007, 0.022].map((x, i) => (
-                <mesh key={`string-${i}`} position={[x, VIOLA_HEIGHT / 2 - 0.32, VIOLA_DEPTH / 2 + 0.025]}>
-                    <cylinderGeometry args={[0.002, 0.002, 0.85, 6]} />
+            {/* === STRINGS === */}
+            {[-0.025, -0.008, 0.008, 0.025].map((x, i) => (
+                <mesh key={`string-${i}`} position={[x, VIOLA_HEIGHT * 0.1, VIOLA_DEPTH / 2 + 0.05]}>
+                    <cylinderGeometry args={[0.002, 0.002, 1.0, 6]} />
                     <meshStandardMaterial color={VIOLA_STRING_COLOR} roughness={0.1} metalness={0.8} />
                 </mesh>
             ))}
 
-            {/* === TAILPIECE - rounded === */}
-            <mesh position={[0, -VIOLA_HEIGHT / 2 + 0.08, VIOLA_DEPTH / 2 + 0.015]} scale={[1.5, 2.5, 0.5]}>
-                <sphereGeometry args={[0.025, 10, 8]} />
+            {/* === TAILPIECE === */}
+            <mesh position={[0, -VIOLA_HEIGHT / 2 + 0.1, VIOLA_DEPTH / 2 + 0.01]}>
+                <extrudeGeometry args={[tailpieceShape, { depth: 0.02, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.01 }]} />
                 <meshStandardMaterial color={VIOLA_FINGERBOARD_COLOR} roughness={0.3} />
             </mesh>
 
-            {/* === CHINREST - organic curve === */}
-            <mesh position={[0.1, -VIOLA_HEIGHT / 2 + 0.18, VIOLA_DEPTH / 2 + 0.025]} scale={[1.2, 1.5, 0.4]}>
-                <sphereGeometry args={[0.035, 10, 8]} />
+            {/* === CHINREST === */}
+            <mesh position={[0.12, -VIOLA_HEIGHT / 2 + 0.38, VIOLA_DEPTH / 2 + 0.03]} scale={[1.3, 1.6, 0.35]}>
+                <sphereGeometry args={[0.04, 12, 10]} />
                 <meshStandardMaterial color={VIOLA_FINGERBOARD_COLOR} roughness={0.3} />
             </mesh>
         </>

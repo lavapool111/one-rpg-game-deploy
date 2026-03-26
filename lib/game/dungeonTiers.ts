@@ -89,6 +89,9 @@ export interface DungeonRewards {
     reinforcedIngots: number;
     infusedIngots: number;
     moonlightAzarite: number;
+    sheetMusicCommon: number;
+    sheetMusicRare: number;
+    sheetMusicLegendary: number;
     commonAccessory: boolean;
     rareAccessory: boolean;
 }
@@ -109,6 +112,9 @@ export function generateTierRewards(tier: DungeonTier): DungeonRewards {
         reinforcedIngots: 0,
         infusedIngots: 0,
         moonlightAzarite: 0,
+        sheetMusicCommon: 0,
+        sheetMusicRare: 0,
+        sheetMusicLegendary: 0,
         commonAccessory: false,
         rareAccessory: false,
     };
@@ -124,37 +130,46 @@ export function generateTierRewards(tier: DungeonTier): DungeonRewards {
             break;
 
         case 'piano':
-            rewards.echoes = randInt(4, 12);
+            rewards.echoes = randInt(6, 12);
             if (chance(50)) rewards.reeds.push(randomReed(1.0, 1.5));
             rewards.valves = randInt(1, 3);
+            if (chance(50)) rewards.sheetMusicCommon = randInt(1, 2);
             break;
 
         case 'mezzo_piano':
-            rewards.echoes = randInt(4, 26);
+            rewards.echoes = randInt(10, 26);
             for (let i = 0; i < randInt(0, 2); i++) rewards.reeds.push(randomReed(1.0, 2.0));
-            rewards.valves = 3;
+            rewards.valves = randInt(4, 6);
             if (chance(30)) rewards.corkGrease = 1;
+            if (chance(90)) rewards.slides = randInt(1, 2);
+            rewards.sheetMusicCommon = randInt(1, 3);
             break;
 
         case 'mezzo_forte':
-            rewards.echoes = randInt(15, 45);
+            rewards.echoes = randInt(21, 45);
             for (let i = 0; i < randInt(1, 2); i++) rewards.reeds.push(randomReed(1.0, 2.5));
-            rewards.valves = randInt(4, 5);
+            rewards.valves = randInt(7, 10);
             if (chance(45)) rewards.corkGrease = 1;
             if (chance(90)) rewards.valveOil = randInt(1, 2);
             rewards.slides = randInt(1, 2);
             if (chance(50)) rewards.brassIngots = 1;
+            rewards.slides = randInt(2, 4);
+            rewards.sheetMusicCommon = randInt(2, 5);
+            if (chance(10)) rewards.sheetMusicRare = 1;
             break;
 
         case 'forte':
             rewards.echoes = randInt(35, 60);
             for (let i = 0; i < randInt(1, 3); i++) rewards.reeds.push(randomReed(1.0, 2.5));
             if (chance(84)) rewards.corkGrease = 1;
-            rewards.valves = randInt(6, 10);
+            rewards.valves = randInt(8, 13);
             if (chance(90)) rewards.valveOil = randInt(1, 3);
             rewards.brassIngots = 1;
             rewards.slides = randInt(1, 4);
             if (chance(9)) rewards.moonlightAzarite = 1;
+            rewards.slides = randInt(4, 10);
+            rewards.sheetMusicCommon = randInt(4, 8);
+            if (chance(30)) rewards.sheetMusicRare = randInt(1, 2);
             break;
 
         case 'fortissimo':
@@ -164,9 +179,12 @@ export function generateTierRewards(tier: DungeonTier): DungeonRewards {
             rewards.valves = randInt(11, 20);
             rewards.valveOil = randInt(2, 3);
             rewards.brassIngots = randInt(2, 4);
-            rewards.slides = randInt(2, 6);
+            rewards.slides = randInt(6, 12)
             if (chance(30)) rewards.moonlightAzarite = 1;
             if (chance(4)) rewards.commonAccessory = true;
+            rewards.sheetMusicCommon = randInt(8, 15);
+            rewards.sheetMusicRare = randInt(1, 3);
+            if (chance(5)) rewards.sheetMusicLegendary = 1;
             break;
 
         case 'fortissimo_plus':
@@ -177,9 +195,12 @@ export function generateTierRewards(tier: DungeonTier): DungeonRewards {
             rewards.valveOil = randInt(2, 5);
             rewards.brassIngots = randInt(4, 10);
             if (chance(45)) rewards.reinforcedIngots = 1;
-            rewards.slides = randInt(9, 12);
+            rewards.slides = randInt(12, 24);
             if (chance(73)) rewards.moonlightAzarite = randInt(1, 3);
             if (chance(15)) rewards.commonAccessory = true;
+            rewards.sheetMusicCommon = randInt(15, 25);
+            rewards.sheetMusicRare = randInt(3, 6);
+            if (chance(15)) rewards.sheetMusicLegendary = randInt(1, 2);
             break;
 
         case 'fortissimo_possibile':
@@ -191,10 +212,13 @@ export function generateTierRewards(tier: DungeonTier): DungeonRewards {
             rewards.brassIngots = randInt(7, 16);
             rewards.reinforcedIngots = randInt(1, 2);
             if (chance(10)) rewards.infusedIngots = 1;
-            rewards.slides = randInt(10, 16);
+            rewards.slides = randInt(16, 30);
             rewards.moonlightAzarite = randInt(2, 4);
             if (chance(30)) rewards.commonAccessory = true;
             if (chance(5)) rewards.rareAccessory = true;
+            rewards.sheetMusicCommon = randInt(25, 50);
+            rewards.sheetMusicRare = randInt(6, 12);
+            rewards.sheetMusicLegendary = randInt(1, 3);
             break;
     }
 

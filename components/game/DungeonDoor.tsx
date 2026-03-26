@@ -1,6 +1,6 @@
 'use client';
 
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import * as THREE from 'three';
 import { useGameStore } from '@/lib/store';
@@ -12,7 +12,7 @@ import { useGameStore } from '@/lib/store';
  * Fills the full corridor opening (10m wide x 12.5m tall x 3ft thick).
  */
 
-// Door dimensions to match corridor
+// Door dimensions to match corridor (12.5ft tall to match corridorHeight)
 const DOOR_WIDTH = 10;
 const DOOR_HEIGHT = 12.5;
 const DOOR_THICKNESS = 3; // 3 feet thick
@@ -29,15 +29,19 @@ interface DungeonDoorProps {
 export function DungeonDoor({ position, rotation = 0, onEnter }: DungeonDoorProps) {
     const groupRef = useRef<THREE.Group>(null);
     const meshRef = useRef<THREE.Mesh>(null);
-    const [hovered, setHovered] = useState(false);
+    const [hovered, _setHovered] = useState(false);
     const [showPrompt, setShowPrompt] = useState(false);
     const [worldPos] = useState(() => new THREE.Vector3());
     const { camera } = useThree();
     const enterDungeon = useGameStore((state) => state.enterDungeon);
     const gameState = useGameStore((state) => state.gameState);
 
-    // Check if player is close enough to interact
+    const doorFrameCount = useRef(0);
+
+    // Check if player is close enough to interact (throttled to every 10 frames)
     useFrame(() => {
+        doorFrameCount.current++;
+        if (doorFrameCount.current % 10 !== 0) return;
         if (!groupRef.current) return;
 
         // Get world position of the door
@@ -75,6 +79,16 @@ export function DungeonDoor({ position, rotation = 0, onEnter }: DungeonDoorProp
                     metalness={0.1}
                     emissive={showPrompt ? '#4a2510' : '#000000'}
                     emissiveIntensity={showPrompt ? 0.4 : 0}
+                />
+            </mesh>
+
+            {/* Door arch cap - fills ceiling gap to match corridor walls */}
+            <mesh position={[0, DOOR_HEIGHT, 0]} rotation={[Math.PI / 2, 0, 0]}>
+                <cylinderGeometry args={[DOOR_WIDTH / 2, DOOR_WIDTH / 2, DOOR_THICKNESS, 32, 1, false, Math.PI / 2, Math.PI]} />
+                <meshStandardMaterial
+                    color="#5c3d2e"
+                    roughness={0.7}
+                    metalness={0.1}
                 />
             </mesh>
 

@@ -40,6 +40,7 @@ export interface Enemy {
     speed: number;
     points: number;
     isActive: boolean;
+    maxRangeFromSpawn?: number;
 }
 
 export interface EnemySpawnConfig {

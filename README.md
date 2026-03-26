@@ -1,8 +1,35 @@
-# Music RPG Game
+# CODA
 
 A music-driven RPG game built with Next.js, React Three Fiber, and TypeScript.
 
-## 🎮 Project Structure
+
+## 📦 Production Build Output (`/dist`)
+
+When you run `npm run build`, the production build is output to the `/dist` directory (as configured in `next.config.ts`).
+
+**Typical `/dist` structure:**
+
+```
+dist/
+    dev/
+        build/                # Build artifacts (chunks, postcss, etc)
+        build-manifest.json    # Manifest of built files
+        cache/                 # Build cache
+        fallback-build-manifest.json
+        lock                   # Build lock file
+        logs/                  # Build logs
+        package.json           # Internal build package info
+        prerender-manifest.json # Prerendering info (usually empty for dynamic apps)
+        routes-manifest.json   # Routing info for the app
+        server/                # Server output (SSR entrypoints, manifests)
+        static/                # Static assets (chunks, media, etc)
+        trace                  # Build trace info
+        types/                 # TypeScript build types (if generated)
+```
+
+> Note: The actual contents may vary depending on your app's features and Next.js version. The `dist/dev/server` folder contains server-side code for SSR, while `dist/dev/static` contains static JS, CSS, and media assets.
+
+---
 
 ```
 one-rpg-game-game/
@@ -47,6 +74,7 @@ one-rpg-game-game/
         └── audio/         # Music & sound effects
 ```
 
+
 ## 🚀 Getting Started
 
 ```bash
@@ -60,7 +88,33 @@ npx pnpm dev
 npx pnpm build
 ```
 
-## � Deploy to Vercel
+
+## 🌐 Deployment & Hosting
+
+### Does this game use server-based routing or is it static?
+
+This project uses **Next.js App Router** and is built as a dynamic (server-based) app by default. The output in `/dist` includes server code for SSR (server-side rendering). It is **not a fully static site** out of the box, so it requires a Node.js server or a platform that supports Next.js SSR (like Vercel, Netlify, or custom Node hosting).
+
+If you want a fully static export (for static hosting like GitHub Pages), you would need to:
+
+- Only use static routes and client-side features (no server components or SSR APIs)
+- Use `next export` (not supported with App Router as of Next.js 13+)
+- Or, convert the app to use the Pages Router and static generation only
+
+#### Can I deploy to GitHub Pages?
+
+**Direct deployment to GitHub Pages is not supported for dynamic Next.js App Router projects.**
+
+However, you can:
+- Deploy to Vercel for free (recommended, see below)
+- Use a static export if you refactor the app to be fully static (Pages Router, no SSR)
+- Use a tool like [Static HTML Export](https://github.com/vercel/next.js/discussions/35773) for limited cases
+
+**Summary:**
+- By default, this game is not a static site and cannot be published directly to GitHub Pages.
+- For free hosting, use [Vercel](https://vercel.com) or [Netlify](https://www.netlify.com/).
+
+---
 
 This project is optimized for deployment on [Vercel](https://vercel.com).
 
@@ -99,7 +153,7 @@ If your project uses environment variables, add them in the Vercel dashboard:
 2. Navigate to **Environment Variables**
 3. Add your variables for Production, Preview, and Development environments
 
-## �🛠️ Tech Stack
+## 🛠️ Tech Stack
 
 | Technology | Purpose |
 |------------|---------|

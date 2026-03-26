@@ -11,6 +11,8 @@ import { PlayerHUD } from './PlayerHUD';
 import { DungeonHUD } from './DungeonHUD';
 import { CombatHUD } from './CombatHUD';
 import { DungeonSummaryScreen } from './DungeonSummaryScreen';
+import { StatsScreen } from './StatsScreen';
+import { WaveUI } from './WaveUI';
 
 /**
  * GameUI Manager Component
@@ -22,24 +24,27 @@ export function GameUI() {
     const gameState = useGameStore((state) => state.gameState);
     const setGameState = useGameStore((state) => state.setGameState);
     const [openInventoryOnPause, setOpenInventoryOnPause] = useState(false);
+    const [showStatsScreen, setShowStatsScreen] = useState(false);
 
     const clearDungeonResult = useGameStore((state) => state.clearDungeonResult);
 
     // Global key handler for inventory and quick-resume
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            const isTyping = document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA';
+
             // 'R' key: Quick resume - closes ALL menus and jumps to gameplay
-            if (e.code === 'KeyR') {
+            if (e.code === 'KeyR' && !isTyping) {
                 if (gameState !== 'playing') {
                     setGameState('playing');
                     setOpenInventoryOnPause(false);
                     clearDungeonResult(); // Close dungeon summary if open
-                    // Simulate a click on the canvas to trigger PointerLockControls
-                    // Small delay to ensure canvas is ready after state change
                     setTimeout(() => {
                         const canvas = document.querySelector('canvas');
                         if (canvas) {
-                            canvas.click();
+                            canvas.focus();
+                            // Rely on DreiPointerLockControls or user click to re-lock
+                            // Manual request here often causes SecurityError conflicts
                         }
                     }, 100);
                 }
@@ -49,7 +54,11 @@ export function GameUI() {
             // Only handle other keys if we are playing or paused
             if (gameState !== 'playing' && gameState !== 'paused') return;
 
-            if (e.code === 'KeyZ') {
+            if (e.code === 'KeyZ' && !isTyping) {
+                if (showStatsScreen) {
+                    setShowStatsScreen(false);
+                    return;
+                }
                 if (gameState === 'playing') {
                     // Open inventory: Pause and set flag
                     setOpenInventoryOnPause(true);
@@ -65,7 +74,23 @@ export function GameUI() {
                         setOpenInventoryOnPause(true);
                     }
                 }
+            } else if (e.code === 'KeyE' && !isTyping) {
+                // Toggle stats screen - only when playing, and pause the game
+                if (gameState === 'playing') {
+                    setShowStatsScreen(true);
+                    setGameState('paused');
+                    document.exitPointerLock();
+                } else if (gameState === 'paused' && showStatsScreen) {
+                    // Close stats screen and resume if already open
+                    setShowStatsScreen(false);
+                    setGameState('playing');
+                }
             } else if (e.code === 'Escape') {
+                // If stats screen is open, close it
+                if (showStatsScreen) {
+                    setShowStatsScreen(false);
+                    return;
+                }
                 // If Escape is pressed, we ensure the inventory flag is reset
                 // so next time we pause it doesn't auto-open inventory
                 if (gameState === 'playing') {
@@ -80,7 +105,7 @@ export function GameUI() {
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [gameState, setGameState, openInventoryOnPause, clearDungeonResult]);
+    }, [gameState, setGameState, openInventoryOnPause, clearDungeonResult, showStatsScreen]);
 
     const isMobile = useSettingsStore((state) => state.isMobile);
 
@@ -113,12 +138,16 @@ export function GameUI() {
                         <PlayerHUD />
                         <DungeonHUD />
                         <CombatHUD />
+                        <WaveUI />
                     </>
                 )
             }
 
-            {/* Pause Menu - Overlay when paused */}
-            {gameState === 'paused' && <PauseMenu defaultOpenInventory={openInventoryOnPause} />}
+            {/* Stats Screen - Overlay when pressing E */}
+            {showStatsScreen && <StatsScreen onClose={() => setShowStatsScreen(false)} />}
+
+            {/* Pause Menu - Overlay when paused (but not when stats screen is open) */}
+            {gameState === 'paused' && !showStatsScreen && <PauseMenu defaultOpenInventory={openInventoryOnPause} />}
 
             {/* Death Screen - Overlay when game over */}
             {gameState === 'gameOver' && <DeathScreen />}

@@ -1,89 +1,122 @@
-export const DUNGEON_HUB_WIDTH = 30;
-export const DUNGEON_HUB_DEPTH = 50;
-export const DUNGEON_CORRIDOR_WIDTH = 12;
-export const DUNGEON_CORRIDOR_LENGTH = 100;
+import { useGameStore } from '@/lib/store/gameStore';
 
 // Helper: is position (x,y,z) inside any valid area?
 // Y parameter is optional - if not provided, Y-based checks are skipped
+// PERF: Uses early-exit pattern — returns true on first zone match instead of evaluating all zones.
 export const isValidDungeonPosition = (x: number, z: number, buffer = 1.5, y?: number): boolean => {
+
+    // --- HUB (most common case — check first) ---
+
     // 1. Hub Room: 30x50
-    // X: [-15, 15], Z: [-25, 25]
-    const inHub = x >= -15 + buffer && x <= 15 - buffer && z >= -25 + buffer && z <= 25 - buffer;
+    if (x >= -15 + buffer && x <= 15 - buffer && z >= -25 + buffer && z <= 25 - buffer) return true;
+
+    // --- CORRIDORS (second most common) ---
 
     // 2. Center Corridor (North): 12x100
-    // X: [-6, 6], Z: [25, 125]
-    // Start extended into Hub (Z=15) to ensure overlap
-    // End at 125 (no buffer) to meet Center Room exactly
-    const inCenterCorr = x >= -6 + buffer && x <= 6 - buffer && z >= 15 && z <= 126;
+    if (x >= -6 + buffer && x <= 6 - buffer && z >= 15 && z <= 126) return true;
 
     // 3. Left Corridor (West): 100x12
-    // X: [-125, -25]
-    // Start extended into Hub (X=-10) to ensure overlap
-    // End extended into Room (X=-135) to ensure overlap with Left Room (starts at X=-160)
-    const inLeftCorr = x >= -135 && x <= -10 && z >= -6 + buffer && z <= 6 - buffer;
+    if (x >= -135 && x <= -10 && z >= -6 + buffer && z <= 6 - buffer) return true;
 
     // 4. Right Corridor (East): 100x12
-    // X: [25, 125]
-    // Start extended into Hub (X=10) to ensure overlap
-    const inRightCorr = x >= 10 && x <= 125 - buffer && z >= -6 + buffer && z <= 6 - buffer;
+    if (x >= 10 && x <= 125 - buffer && z >= -6 + buffer && z <= 6 - buffer) return true;
 
-    // 5. Left Room: 25x35 (Width x Depth) - EXPANDED with 75ft ceiling
-    // Room center at world X=-142.5, Z=0 (after rotation).
-    // Room is 35ft in local Z (world X): X: -160 to -125
-    // Room is 25ft in local X (world Z): Z: -12.5 to +12.5
-    // South wall at world Z=+12.5, doorway opening at Z=-1 to +13
-    // Z extended to +13 to overlap with extension corridor doorway (Z starts at 10)
-    const inLeftRoom = x >= -160 + buffer && x <= -125 - buffer && z >= -13 + buffer && z <= 13 - buffer;
+    // --- ROOMS ---
 
-    // 6. Right Room: 15x25 (Width x Depth)
-    // X: [125, 150]
-    // Z: [-7.5, 7.5]
-    // Start extended into Corridor (X=120) to ensure overlap
-    const inRightRoom = x >= 120 && x <= 150 - buffer && z >= -7.5 + buffer && z <= 7.5 - buffer;
+    // 5. Left Room: 25x35
+    if (x >= -160 + buffer && x <= -125 - buffer && z >= -12.5 + buffer && z <= 12) return true;
 
-    // 7. Center Room: 25x60 (Width x Depth) - vault room before stairwell
-    // Room at world Z=155 (center), spans Z=125-185
-    // Starts exactly at Z=125 (end of corridor)
-    // X: [-12.5, 12.5], Z ends at 183 (stairwell zone handles Z >= 183 with narrower X)
-    const inCenterRoom = x >= -12.5 + buffer && x <= 12.5 - buffer && z >= 125.5 && z <= 183;
+    // 6. Right Room: 15x25
+    if (x >= 120 && x <= 150 - buffer && z >= -7.5 + buffer && z <= 7.5 - buffer) return true;
 
-    // 8. Stairwell (behind vault room, with broken stairs parkour)
-    // Stairs: world Z=185 to Z=225
-    // Narrow section (Z 183-220): X: [-5, 5] (6ft wide stairs, matches stairwell-catch-floor)
-    // Wide section (Z 220-226): X: [-15, 15] (underground room floor starts at Z=220, room is 30ft wide)
-    const inStairwellNarrow = x >= -5 + buffer && x <= 5 - buffer && z >= 183 && z <= 220;
-    const inStairwellWide = x >= -15 + buffer && x <= 15 - buffer && z >= 220 && z <= 226;
-    const inStairwell = inStairwellNarrow || inStairwellWide;
+    // 7. Center Room: 25x60
+    if (x >= -12.5 + buffer && x <= 12.5 - buffer && z >= 125.5 && z <= 183) return true;
 
-    // 9. Underground Room (at bottom of stairs)
-    // Room centered at world Z=240 (155+80+5), 30x30 room
-    // Floor spans Z=220-255, X=-15 to X=15
-    // Back wall at Z=255, so stop player with buffer before it
-    // REQUIRES Y <= -15 to be valid (floor is at Y=-20)
-    const inUndergroundRoomXZ = x >= -15 + buffer && x <= 15 - buffer && z >= 220 && z <= 255 - buffer;
-    const inUndergroundRoom = inUndergroundRoomXZ && (y === undefined || y <= -15);
+    // --- STAIRWELLS & UNDERGROUND ---
 
-    // 10. Left Room South Extension Corridor (elevated at Y=15)
-    // Corridor geometry: 14ft wide, centered at world X ≈ -148.5
-    // World X bounds: -155.5 to -141.5 (with buffer: -154 to -143)
-    // World Z bounds: starts at Z=13 (doorway), extends to Z=148
-    // REQUIRES Y >= 13 to be valid (corridor floor is at Y=15)
-    const inLeftRoomSouthExtXZ = x >= -156 + buffer && x <= -141 - buffer && z >= 10 && z <= 149 - buffer;
-    const inLeftRoomSouthExt = inLeftRoomSouthExtXZ && (y === undefined || y >= 13);
+    // 8. Stairwell (behind vault room)
+    if ((x >= -5 + buffer && x <= 5 - buffer && z >= 183 && z <= 220) ||
+        (x >= -15 + buffer && x <= 15 - buffer && z >= 220 && z <= 226)) return true;
 
-    // 11. Prison Cells in Left Room South Extension Corridor
-    // 4 cells (8x8 ft each) jutting out from the corridor walls at local X=35 and X=55
-    // Corridor X range: -156 to -141 (14ft wide)
-    // West cells (local Z=+11.5) extend from X=-156 outward to X=-164 (8ft)
-    // East cells (local Z=-11.5) extend from X=-141 outward to X=-133 (8ft)
-    // Cell Z positions: local X=35 -> world Z≈51 (range 47-55), local X=55 -> world Z≈71 (range 67-75)
-    // REQUIRES Y >= 13 to be valid (floor is at Y=15)
-    // Include overlap with corridor boundary for smooth transition
-    const inPrisonCellWest1XZ = x >= -164 + buffer && x <= -154 && z >= 43 && z <= 51;
-    const inPrisonCellWest2XZ = x >= -164 + buffer && x <= -154 && z >= 63 && z <= 71;
-    const inPrisonCellEast1XZ = x >= -143 && x <= -133 - buffer && z >= 43 && z <= 51;
-    const inPrisonCellEast2XZ = x >= -143 && x <= -133 - buffer && z >= 63 && z <= 71;
-    const inPrisonCells = (inPrisonCellWest1XZ || inPrisonCellWest2XZ || inPrisonCellEast1XZ || inPrisonCellEast2XZ) && (y === undefined || y >= 13);
+    // 9. Underground Room (REQUIRES Y <= -15)
+    if (x >= -15 + buffer && x <= 15 - buffer && z >= 225 && z <= 257 && (y === undefined || y <= -15)) return true;
 
-    return inHub || inCenterCorr || inLeftCorr || inRightCorr || inLeftRoom || inRightRoom || inCenterRoom || inStairwell || inUndergroundRoom || inLeftRoomSouthExt || inPrisonCells;
+    // 6.5 Right Room Stairwell
+    if (x >= 148 && x <= 191 && z >= -3 + buffer && z <= 3 - buffer) return true;
+
+    // Right Underground Room (REQUIRES Y <= -10)
+    if (x >= 190 && x <= 211 - buffer && z >= -10 + buffer && z <= 10 - buffer && (y === undefined || y <= -10)) return true;
+
+    // --- EXTENSIONS & DEEP AREAS ---
+
+    // 10. Left Room South Extension Corridor (Y >= 13)
+    if (x >= -156 + buffer && x <= -141 - buffer && z >= 10 && z <= 250 - buffer && (y === undefined || y >= 13)) return true;
+
+    // 11. Prison Cells (Y >= 13)
+    if ((y === undefined || y >= 13) && (
+        (x >= -164 + buffer && x <= -154 && z >= 44.5 && z <= 51) ||
+        (x >= -164 + buffer && x <= -154 && z >= 64.5 && z <= 71) ||
+        (x >= -143 && x <= -133 - buffer && z >= 44.5 && z <= 51) ||
+        (x >= -143 && x <= -133 - buffer && z >= 64.5 && z <= 71)
+    )) return true;
+
+    // 12. Hallway Extension (Y <= -15)
+    // Truncated at 574 to avoid overlap with Altar Room sequence
+    if (x >= -6 + buffer && x <= 6 - buffer && z >= 252 && z <= 574 && (y === undefined || y <= -15)) return true;
+
+    // 13. Left Branch Corridor (Y >= 13)
+    if (x >= -150 && x <= -15 + 2 && z >= 240 && z <= 251 - buffer && (y === undefined || y >= 13)) return true;
+
+    // 13b. Shaft (no Y requirement)
+    if (x >= -15 && x <= 7 - buffer && z >= 237 && z <= 251 - buffer) return true;
+
+    // 14. Left Room Upper Areas (Y >= 12/40)
+    // a) Third floor platform
+    if (x >= -150 && x <= -139 + buffer && z >= -12 && z <= -2 + buffer && (y === undefined || y >= 12)) return true;
+    // b) Fourth platform
+    if (x >= -153.5 + buffer && x <= -140.5 - buffer && z >= -8 + buffer && z <= 8 - buffer && (y === undefined || y >= 40)) return true;
+    // c) Upper corridor
+    if (x >= -198.5 - buffer && x <= -150.5 - buffer && z >= -6 + buffer && z <= 6 - buffer && (y === undefined || y >= 40)) return true;
+    // d) Upper vault room
+    if (x >= -251.5 + buffer && x <= -199 + buffer && z >= -26.75 + buffer && z <= 26.75 - buffer && (y === undefined || y >= 40)) return true;
+
+    // 15. Circular Vault Room (Y <= -15)
+    const distToCircRoomSq = x * x + (z - 360) * (z - 360);
+    const circRoomRadius = 25 - buffer;
+    if (distToCircRoomSq <= circRoomRadius * circRoomRadius && (y === undefined || y <= -15)) return true;
+
+    // 16. West Tuba Corridor (Y <= -15)
+    if (x >= -98 && x <= -23 && z >= 355 && z <= 365 && (y === undefined || y <= -15)) return true;
+
+    // 17. West Vault Room (Y <= -15)
+    if (x >= -122 && x <= -96 && z >= 349 && z <= 371 && (y === undefined || y <= -15)) return true;
+
+    // 18. Metal Door Vault (Y <= -15)
+    if (((x >= -6 && x <= 6 && z >= 370 && z <= 406) || (x >= -14 && x <= 14 && z >= 406 && z <= 429)) && (y === undefined || y <= -15)) return true;
+
+    // 9.5 Deep Vault Prison (Y <= -15)
+    // Truncated at 574 to avoid overlap with Altar Room sequence
+    if ((y === undefined || y <= -15) && (
+        (x >= -8 && x <= 8 && z >= 429 && z <= 574) ||
+        (x >= -18 + buffer && x <= 18 - buffer && (
+            (z >= 467 && z <= 474) || (z >= 517 && z <= 524)
+        ))
+    )) return true;
+
+    // 9.6 Trial Room Stairwell (Y <= -15) - REMOVED: Overlaps with Altar Room sequence
+    // 9.7 Deep Vault Trial Room (Y <= -15) - REMOVED: Overlaps with Altar Room sequence
+
+    // 1b. Hub Descent — gated behind 5 trial room kills
+    const passageBuf = 0.5;
+    const inHubDescentGeometry =
+        (x >= -14.5 + passageBuf && x <= -9.5 - passageBuf && z >= -41 && z <= -23) ||
+        (x >= 9.5 + passageBuf && x <= 14.5 - passageBuf && z >= -41 && z <= -23) ||
+        (x >= -14.5 + buffer && x <= 14.5 - buffer && z >= -56 + buffer && z <= -39) ||
+        (x >= -6 + passageBuf && x <= 6 - passageBuf && z >= -86 && z <= -54);
+    if (inHubDescentGeometry) {
+        const trialKills = useGameStore.getState().dungeonState?.trialRoomKills ?? 0;
+        if (trialKills >= 5) return true;
+    }
+
+    return false;
 };
