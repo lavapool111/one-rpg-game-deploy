@@ -5,8 +5,8 @@ import React from 'react';
 interface EquippedItemSummaryProps {
     title: string;
     slotIndex?: number;
-    colorClass: string; // e.g., 'yellow-500', 'orange-500'
-    borderColorClass: string; // e.g., 'yellow-600/30'
+    textClass: string; // e.g., 'text-yellow-500'
+    borderClass: string; // e.g., 'border-yellow-600/30'
     onUnequip: () => void;
     children: React.ReactNode;
     footer?: React.ReactNode;
@@ -16,8 +16,8 @@ interface EquippedItemSummaryProps {
 export function EquippedItemSummary({
     title,
     slotIndex,
-    colorClass,
-    borderColorClass,
+    textClass,
+    borderClass,
     onUnequip,
     children,
     footer,
@@ -26,9 +26,9 @@ export function EquippedItemSummary({
     const gridClass = gridCols === 3 ? 'grid-cols-3' : 'grid-cols-2';
 
     return (
-        <div className={`p-3 rounded-lg border border-${borderColorClass} bg-slate-800/50`}>
+        <div className={`p-3 rounded-lg border ${borderClass} bg-slate-800/50`}>
             <div className="flex items-center justify-between mb-2">
-                <span className={`text-${colorClass} font-semibold truncate flex-1 mr-2`}>
+                <span className={`${textClass} font-semibold truncate flex-1 mr-2`}>
                     {title} {slotIndex !== undefined && slotIndex >= 0 && `(Slot ${slotIndex + 1})`}
                 </span>
                 <button

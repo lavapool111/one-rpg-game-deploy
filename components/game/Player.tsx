@@ -89,15 +89,7 @@ export function Player({
     });
 
     useEffect(() => {
-        const handleMouseDown = (event: MouseEvent) => {
-            const isLocked = document.pointerLockElement !== null;
-            if (event.button === 0 && isLocked) {
-                usePlayerStore.getState().attack();
-            }
-        };
-
-        window.addEventListener('mousedown', handleMouseDown);
-        return () => window.removeEventListener('mousedown', handleMouseDown);
+        // No longer handling global input here, moved to FirstPersonController
     }, []);
 
     if (!visible) return null;

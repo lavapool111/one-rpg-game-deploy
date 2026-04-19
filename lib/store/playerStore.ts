@@ -5,21 +5,19 @@ import { subscribeWithSelector } from "zustand/middleware";
 import { useGameStore } from "./gameStore";
 import { getStatsForLevel, getXpRequiredForLevel } from "../game/stats";
 import {
-  Inventory,
   getInitialInventory,
   MaterialItemId,
-  ReedStrength,
   LigatureInstance,
   MouthpieceInstance,
   CaseInstance,
-  EnchantmentInstance,
-  EnchantmentTier,
   getMouthpieceStats,
-  MeldStatBonus,
 } from "../game/inventory";
 import { AbilityUpgrades, AbilityUpgradePath, calculateAbilityUpgradeStats, ABILITY_UPGRADES_UNLOCK_LEVEL, ABILITY_UPGRADES_TIER_1, ABILITY_UPGRADES_TIER_2, ABILITY_UPGRADES_TIER_2_UNLOCK_LEVEL } from "../game/abilityUpgrades";
 import AudioManager from "../audio/AudioManager";
 import { GAME_CONFIG } from "../game/config";
+import { calculateIngredientsXp, ACTION_XP_BASE, calculateKillXp, getTempoRating } from "../game/xp";
+import { triggerAreaDamage } from "../enemies/enemyMovement";
+import { calculateBasicAttackDamage } from "../enemies/damageUtils";
 
 // Re-export shared helpers from accessoryStore so existing imports still work
 export { SLOT_BONUSES, getSlotMultiplier, calculateStats } from "./accessoryStore";
@@ -138,6 +136,8 @@ export interface PlayerStats {
   input: {
     joystick: { x: number, y: number };
     look: { x: number, y: number };
+    jump: boolean;
+    sprint: boolean;
   };
   sessionId: string;
   playerName: string;
@@ -207,6 +207,8 @@ export interface PlayerState extends PlayerStats {
   setInputJoystick: (x: number, y: number) => void;
   setInputLook: (x: number, y: number) => void;
   resetInputLook: () => void;
+  setInputJump: (jump: boolean) => void;
+  setInputSprint: (sprint: boolean) => void;
 
   // Status Effects
   applySlow: (percent: number, durationSeconds: number) => void;
@@ -225,11 +227,11 @@ export interface PlayerState extends PlayerStats {
 
 // Lazy import helpers to avoid circular dependencies
 function getAccessoryStore() {
-  return require('./accessoryStore').useAccessoryStore;
+  return require('./accessoryStore').default;
 }
 
 function getInventoryStore() {
-  return require('./inventoryStore').useInventoryStore;
+  return require('./inventoryStore').default;
 }
 
 function applyAutoBuild() {
@@ -238,12 +240,12 @@ function applyAutoBuild() {
   const playerStore = usePlayerStore.getState();
 
   // 1. Give 100x Strength 5 Reeds
-  invStore.getState().addReed('5.0', 100);
+  invStore.getState().addReed('5.0', 15);
 
   // Define instances
-  const ligature: LigatureInstance = { id: 'one_screw_reinforced_metal', level: 200 };
-  const mouthpiece: MouthpieceInstance = { id: 'plastic', level: 1000 };
-  const caseItem: CaseInstance = { id: 'fabric_case', level: 200, meldType: 'plated', meldTier: 5 };
+  const ligature: LigatureInstance = { id: 'one_screw_reinforced_metal', level: 500 };
+  const mouthpiece: MouthpieceInstance = { id: 'plastic', level: 30000 };
+  const caseItem: CaseInstance = { id: 'wood_case', level: 400, meldType: 'plated', meldTier: 2 };
 
   // 2-4. Add items to inventory correctly via setState
   invStore.setState((state: any) => ({
@@ -304,6 +306,8 @@ function getInitialStats(): PlayerStats {
     input: {
       joystick: { x: 0, y: 0 },
       look: { x: 0, y: 0 },
+      jump: false,
+      sprint: false,
     },
     sessionId: Math.random().toString(36).substring(2, 15),
     playerName: '',
@@ -327,8 +331,8 @@ export const usePlayerStore = create<PlayerState>()(
     abilityUpgrades: { chosenPath: null, currentLevel: 0, unlocked: false },
     isOvertoneActive: false,
     overtoneCooldown: 0,
-    overtoneDuration: 2000,
-    overtoneTotalCooldown: 15000,
+    overtoneDuration: 3000,
+    overtoneTotalCooldown: 60000,
     lastOvertoneCastTime: 0,
     tempo: 0,
     rating: 'F',
@@ -338,7 +342,7 @@ export const usePlayerStore = create<PlayerState>()(
     isStunned: false,
     _cachedAbilityStats: null,
 
-    _invalidateBonusCaches: () => set({ _cachedAbilityStats: null }),
+    _invalidateBonusCaches: () => set((state) => ({ _cachedAbilityStats: null, version: state.version + 1 })),
 
     // ========== CORE ACTIONS ==========
 
@@ -346,11 +350,11 @@ export const usePlayerStore = create<PlayerState>()(
       const now = Date.now();
       const state = get();
       if (state.isAttacking || now - state.lastAttackTime < state.attackCooldown * 1000) return;
-      set({ isAttacking: true, attackProgress: 0, lastAttackTime: now });
+      set((state) => ({ isAttacking: true, attackProgress: 0, lastAttackTime: now, version: state.version + 1 }));
       getAccessoryStore().getState().incrementAttackCounter();
     },
 
-    setPosition: (x, y, z) => set({ position: [x, y, z] }),
+    setPosition: (x, y, z) => set(() => ({ position: [x, y, z] })),
 
     loadState: (saved) => set((state) => {
       const newStats = { ...state };
@@ -363,7 +367,8 @@ export const usePlayerStore = create<PlayerState>()(
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
         const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-        const derived = calculateStats(saved.level, accStore.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+        const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+        const derived = calculateStats(saved.level, accStore.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
         newStats.maxHealth = derived.health;
         newStats.damage = derived.damage;
         newStats.basicAttackDamage = derived.basicAttackDamage;
@@ -387,7 +392,8 @@ export const usePlayerStore = create<PlayerState>()(
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
         const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-        const derived = calculateStats(newStats.level, saved.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+        const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+        const derived = calculateStats(newStats.level, saved.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
         newStats.maxHealth = derived.health;
         newStats.damage = derived.damage;
         newStats.basicAttackDamage = derived.basicAttackDamage;
@@ -454,7 +460,8 @@ export const usePlayerStore = create<PlayerState>()(
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
         const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-        const finalStats = calculateStats(currentState.level, accStore.equippedReed, currentState.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+        const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+        const finalStats = calculateStats(currentState.level, accStore.equippedReed, currentState.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
         let mpCritBonus = 0;
         if (accStore.equippedMouthpiece) {
@@ -497,7 +504,8 @@ export const usePlayerStore = create<PlayerState>()(
           level += 1;
           const accStore = getAccessoryStore().getState();
           const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+          const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
           const newMaxXp = getXpRequiredForLevel(level);
           health = newStats.health;
           maxHealth = newStats.health;
@@ -513,7 +521,7 @@ export const usePlayerStore = create<PlayerState>()(
         return { xp, maxXp, level, health, maxHealth, damage, basicAttackDamage, speed, critChance, superCritChance, defense, version: state.version + 1 };
       }),
 
-    stopAttack: () => set({ isAttacking: false, attackProgress: 0 }),
+    stopAttack: () => set((state) => ({ isAttacking: false, attackProgress: 0, version: state.version + 1 })),
 
     takeDamage: (amount, enemyType) =>
       set((state) => {
@@ -538,12 +546,13 @@ export const usePlayerStore = create<PlayerState>()(
           AudioManager.play(DEATH_SOUND_KEY, 'sfx', { volume: 0.5 });
           useGameStore.getState().setGameState('gameOver');
         }
-        return { health: newHealth };
+        return { health: newHealth, version: state.version + 1 };
       }),
 
     heal: (amount) =>
       set((state) => ({
         health: Math.min(state.maxHealth, state.health + amount),
+        version: state.version + 1,
       })),
 
     levelUp: () =>
@@ -552,7 +561,8 @@ export const usePlayerStore = create<PlayerState>()(
         const newLevel = state.level + 1;
         const accStore = getAccessoryStore().getState();
         const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-        const newStats = calculateStats(newLevel, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+        const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+        const newStats = calculateStats(newLevel, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
         return {
           level: newLevel,
           maxHealth: newStats.health,
@@ -607,13 +617,14 @@ export const usePlayerStore = create<PlayerState>()(
         duration += ligatureBonus.longToneDurationMs;
       }
 
-      set({ isLongToneActive: true });
+      set((state) => ({ isLongToneActive: true, version: state.version + 1 }));
 
       setTimeout(() => {
-        set({
+        set((state) => ({
           isLongToneActive: false,
           longToneCooldown: Date.now() + get().longToneTotalCooldown,
-        });
+          version: state.version + 1,
+        }));
       }, duration);
     },
 
@@ -622,16 +633,32 @@ export const usePlayerStore = create<PlayerState>()(
       const state = get();
       if (state.isOvertoneActive || now < state.overtoneCooldown) return;
 
-      set({
+      set((state) => ({
         isOvertoneActive: true,
-        lastOvertoneCastTime: now
-      });
+        lastOvertoneCastTime: now,
+        version: state.version + 1
+      }));
+
+      // Burst Damage at Start
+      const burstRadius = 15; // 15ft radius
+      const { critChance } = state;
+      const { critFactor } = require('./accessoryStore').useAccessoryStore.getState();
+      const damageResult = calculateBasicAttackDamage(state.damage, critChance, critFactor, 5.0);
+
+      triggerAreaDamage(
+        state.position[0],
+        state.position[2],
+        burstRadius,
+        damageResult.damage,
+        damageResult.type
+      );
 
       setTimeout(() => {
-        set({
+        set((state) => ({
           isOvertoneActive: false,
           overtoneCooldown: Date.now() + get().overtoneTotalCooldown,
-        });
+          version: state.version + 1,
+        }));
       }, state.overtoneDuration);
     },
 
@@ -657,7 +684,8 @@ export const usePlayerStore = create<PlayerState>()(
         const accStore = getAccessoryStore().getState();
         const gameStore = useGameStore.getState();
         const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-        const stats = calculateStats(state.level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+        const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+        const stats = calculateStats(state.level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
         let spawnPos: [number, number, number] = [0, 1.5, 0];
 
@@ -667,15 +695,17 @@ export const usePlayerStore = create<PlayerState>()(
           const newDeathCount = gameStore.altarDeathCount + 1;
 
           if (newDeathCount >= 10) {
-            console.log("10 deaths in Altar Room reached. Resetting altar and returning to spawn.");
             gameStore.resetAltarDeathCount();
             gameStore.setAltarRoomWave(0);
-            spawnPos = [0, 1.5, 0]; // Back to main spawn
+            gameStore.setAltarRitualStarted(false);
+            gameStore.setIsInAltarRoom(false);
+            spawnPos = [0, 1.5, 560]; // Back to main spawn
             // Play a reset sound
             AudioManager.play('death', 'sfx', { volume: 0.8 });
           } else {
-            console.log(`Death in Altar Room. Altar Death Count: ${newDeathCount}/10`);
-            spawnPos = [0, 5, 636.5]; // Altar center Z is 636.5, top Y is 4.0
+            const { getAltarCenterZ } = require('../game/altarGeometry');
+            const targetZ = getAltarCenterZ(gameStore.currentAltarIndex);
+            spawnPos = [0, 5, targetZ]; // Respawn at the center of the current Altar
           }
         }
 
@@ -719,69 +749,10 @@ export const usePlayerStore = create<PlayerState>()(
           newTempo = 1;
         }
 
-        let xpMultFromTempo = 1
-        xpMultFromTempo = 1 + Math.floor(newTempo / 2) * 0.1;
 
 
-        let rating = 'F';
-        if (newTempo >= 10001) rating = 'Ω∞';
-        else if (newTempo >= 5001) rating = 'Ω!';
-        else if (newTempo >= 3001) rating = 'Ω?';
-        else if (newTempo >= 2001) rating = '+Ω';
-        else if (newTempo >= 1501) rating = 'Ω';
-        else if (newTempo >= 1001) rating = 'Z++';
-        else if (newTempo >= 501) rating = 'Z+';
-        else if (newTempo >= 301) rating = 'Z';
-        else if (newTempo >= 201) rating = 'Y';
-        else if (newTempo >= 101) rating = 'X';
-        else if (newTempo >= 71) rating = 'SSS';
-        else if (newTempo >= 41) rating = 'SS';
-        else if (newTempo >= 21) rating = 'S';
-        else if (newTempo >= 11) rating = 'A';
-        else if (newTempo >= 6) rating = 'B';
-        else if (newTempo >= 3) rating = 'C';
-        else if (newTempo >= 1) rating = 'D';
-
-        /* 
-          Enemy XP: 1x from trumpets, 1.5x from trombones, 2x from horns, 3x from euphoniums, 5x from tubas imported from enemy files.
-          XP also multiplied by if the enemy is in an altar wave. If in a wave 1, x1.5, wave 2, x2, wave 3, x3, wave 4, x4, wave 5, x5. If elsewhere, it's just 1x. Stacks with tempo, enemy type, and base XP.
-
-          Base XP scales with enemy level (0.25 per level + small exponential bonus for high levels)
-          Level 1: 1 XP, Level 10: 3.25 XP, Level 50: ~14.3 XP, Level 100: ~33 XP
-          ~1% bonus per 5 levels
-          Extra 1.5% bonus per level above level 100
-
-          xpMultiplier is the multiplier of enemy type * altar.
-
-          Total multipliers: Tempo, Enemy Type, Altar, High Level Bonus, Base XP
-
-        */
-
-        let alina = 5
-
-        let alinalevel = Math.min(enemyLevel, 1000)
-
-        if (enemyLevel >= 500) {
-          alina = 5 + Math.floor((alinalevel - 500) / 300);
-        }
-
-        let alinatwo = Math.floor(alinalevel / alina) * Math.max(Math.log(alinalevel / 200), 1)
-
-        const linearXp = 1 + (enemyLevel - 1) * 0.25;
-        let expBonus = 0;
-        if (enemyLevel <= 1000) {
-          expBonus = Math.pow(1.025, alinatwo) - 1;
-        } else {
-          let exp = Math.min((alinatwo + ((enemyLevel - 1000) / 25)), 1000)
-          expBonus = Math.pow(1.025, exp) - 1;
-        }
-        let HighLevelMult = 1;
-        if (enemyLevel >= 100) {
-          HighLevelMult = 1 + (enemyLevel - 100) * 0.015;
-        }
-        const basexp = (linearXp + expBonus) * HighLevelMult;
-
-        const totalXp = Math.floor(basexp * xpMultFromTempo * xpMultiplier);
+        const rating = getTempoRating(newTempo);
+        const totalXp = calculateKillXp(enemyLevel, newTempo, xpMultiplier);
 
 
 
@@ -794,7 +765,8 @@ export const usePlayerStore = create<PlayerState>()(
           const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
           const accStore = getAccessoryStore().getState();
           const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
-          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+          const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
           health = newStats.health;
           maxHealth = newStats.health;
           damage = newStats.damage;
@@ -813,18 +785,18 @@ export const usePlayerStore = create<PlayerState>()(
         };
       }),
 
-    updateMoveTime: () => set({ lastMoveTime: Date.now() }),
-    setPlayerName: (name: string) => set({ playerName: name, version: get().version + 1 }),
+    updateMoveTime: () => set(() => ({ lastMoveTime: Date.now() })),
+    setPlayerName: (name: string) => set((state) => ({ playerName: name, version: state.version + 1 })),
 
     applyStun: (duration) => {
-      set({ isStunned: true });
-      setTimeout(() => set({ isStunned: false }), duration * 1000);
+      set((state) => ({ isStunned: true, version: state.version + 1 }));
+      setTimeout(() => set((state) => ({ isStunned: false, version: state.version + 1 })), duration * 1000);
     },
 
     applySlow: (percent, duration) => {
       const modifier = 1.0 - (percent / 100.0);
-      set({ speedModifier: Math.max(0.1, modifier) }); // Minimum 10% speed limit
-      setTimeout(() => set({ speedModifier: 1.0 }), duration * 1000);
+      set((state) => ({ speedModifier: Math.max(0.1, modifier), version: state.version + 1 })); // Minimum 10% speed limit
+      setTimeout(() => set((state) => ({ speedModifier: 1.0, version: state.version + 1 })), duration * 1000);
     },
 
     // ========== INPUT ==========
@@ -841,9 +813,17 @@ export const usePlayerStore = create<PlayerState>()(
       input: { ...state.input, look: { x: 0, y: 0 } }
     })),
 
+    setInputJump: (jump) => set((state) => ({
+      input: { ...state.input, jump }
+    })),
+
+    setInputSprint: (sprint) => set((state) => ({
+      input: { ...state.input, sprint }
+    })),
+
     // ========== CLASS ==========
 
-    setPlayerClass: (playerClass) => set({ playerClass }),
+    setPlayerClass: (playerClass) => set((state) => ({ playerClass, version: state.version + 1 })),
 
     // ========== ABILITY UPGRADES ==========
 
@@ -876,20 +856,31 @@ export const usePlayerStore = create<PlayerState>()(
       const invStore = getInventoryStore().getState();
       if (!invStore.removeMaterial(upgradeLevel.costMaterial, upgradeLevel.cost)) return false;
 
-      set({
+      set((state) => ({
         abilityUpgrades: {
           chosenPath: currentLevelIndex === 0 ? path! : upgrades.chosenPath,
           currentLevel: currentLevelIndex + 1,
           unlocked: true,
         },
         _cachedAbilityStats: null,
-      });
+        version: state.version + 1,
+      }));
+
+      // Award XP
+      const xpReward = ACTION_XP_BASE.UPGRADE_ABILITY +
+        (currentLevelIndex * 50) +
+        calculateIngredientsXp([{ itemId: upgradeLevel.costMaterial, quantity: upgradeLevel.cost }]);
+      get().addXp(xpReward);
 
       return true;
     },
 
     getAbilityUpgradeStats: () => {
-      return calculateAbilityUpgradeStats(get().abilityUpgrades);
+      const state = get();
+      if (state._cachedAbilityStats) return state._cachedAbilityStats;
+      const stats = calculateAbilityUpgradeStats(state.abilityUpgrades);
+      set({ _cachedAbilityStats: stats });
+      return stats;
     },
 
     isAbilityUpgradesUnlocked: () => {

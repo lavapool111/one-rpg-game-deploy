@@ -1,6 +1,6 @@
 'use client';
 
-import { useGameStore, usePlayerStore } from '@/lib/store';
+import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
 import { CLASS_INFO } from '@/lib/store/playerStore';
 import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { useInventoryStore } from '@/lib/store/inventoryStore';
@@ -125,22 +125,41 @@ export function PauseMenu({ defaultOpenInventory = false }: PauseMenuProps) {
 
                     <div className="bg-black/40 rounded p-4 mb-2 text-sm text-slate-300">
                         <h3 className="text-yellow-500 font-bold mb-2 uppercase text-xs tracking-wider">Controls</h3>
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-1">
-                            <span className="text-slate-400">Move</span>
-                            <span className="text-right font-mono text-white">WASD</span>
+                        {useSettingsStore.getState().isMobile ? (
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                <span className="text-slate-400">Move</span>
+                                <span className="text-right font-mono text-white">Joystick</span>
 
-                            <span className="text-slate-400">Look</span>
-                            <span className="text-right font-mono text-white">Mouse</span>
+                                <span className="text-slate-400">Look</span>
+                                <span className="text-right font-mono text-white">Drag Right</span>
 
-                            <span className="text-slate-400">Attack</span>
-                            <span className="text-right font-mono text-white">L-Click</span>
+                                <span className="text-slate-400">Attack</span>
+                                <span className="text-right font-mono text-white">ATK Button</span>
 
-                            <span className="text-slate-400">Long Tone</span>
-                            <span className="text-right font-mono text-white">1</span>
+                                <span className="text-slate-400">Jump</span>
+                                <span className="text-right font-mono text-white">↑ Button</span>
 
-                            <span className="text-slate-400">Sprint</span>
-                            <span className="text-right font-mono text-white">Q</span>
-                        </div>
+                                <span className="text-slate-400">Sprint</span>
+                                <span className="text-right font-mono text-white">Full Joystick</span>
+                            </div>
+                        ) : (
+                            <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+                                <span className="text-slate-400">Move</span>
+                                <span className="text-right font-mono text-white">WASD</span>
+
+                                <span className="text-slate-400">Look</span>
+                                <span className="text-right font-mono text-white">Mouse</span>
+
+                                <span className="text-slate-400">Attack</span>
+                                <span className="text-right font-mono text-white">L-Click</span>
+
+                                <span className="text-slate-400">Long Tone</span>
+                                <span className="text-right font-mono text-white">1</span>
+
+                                <span className="text-slate-400">Sprint</span>
+                                <span className="text-right font-mono text-white">Q</span>
+                            </div>
+                        )}
                     </div>
 
                     <PauseButton onClick={() => setShowSettings(true)}>

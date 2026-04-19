@@ -155,14 +155,15 @@ export function CombatHUD() {
   };
 
   return (
-    <div className={`absolute bottom-8 pointer-events-auto z-50 transition-all duration-300 ${isMobile ? 'right-36' : 'right-8'} flex gap-4`}>
+    <div className={`absolute bottom-8 pointer-events-auto z-50 transition-all duration-300 ${isMobile ? 'right-4' : 'right-8'} flex gap-3 items-end`}>
       {/* Ability 1 Button - Long Tone/Sustained Bow */}
       <div className="flex flex-col items-center">
         <button
           onClick={handleAttack1}
+          onTouchStart={(e) => { e.preventDefault(); handleAttack1(); }}
           disabled={timeLeft1 > 0 || isLongToneActive}
           className={`
-            relative w-20 h-20 rounded-full flex items-center justify-center
+            relative w-16 h-16 md:w-20 md:h-20 rounded-full flex items-center justify-center
             border-4 transition-all duration-200
             ${isLongToneActive
               ? 'bg-red-500/50 border-red-400 scale-110 shadow-[0_0_20px_rgba(239,68,68,0.6)]'
@@ -192,8 +193,8 @@ export function CombatHUD() {
           {timeLeft1 > 0 && (
             <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none">
               <circle
-                cx="40"
-                cy="40"
+                cx="50%"
+                cy="50%"
                 r="36"
                 fill="none"
                 stroke="white"
@@ -216,9 +217,10 @@ export function CombatHUD() {
       <div className="flex flex-col items-center">
         <button
           onClick={handleAttack2}
+          onTouchStart={(e) => { e.preventDefault(); handleAttack2(); }}
           disabled={timeLeft2 > 0 || isOvertoneActive}
           className={`
-            relative w-20 h-20 rounded-full flex items-center justify-center
+            relative w-16 h-16 md:w-20 md:h-20 rounded-full flex items-center justify-center
             border-4 transition-all duration-200
             ${isOvertoneActive
               ? 'bg-amber-500/50 border-amber-400 scale-110 shadow-[0_0_20px_rgba(245,158,11,0.6)]'
@@ -248,8 +250,8 @@ export function CombatHUD() {
           {timeLeft2 > 0 && (
             <svg className="absolute inset-0 w-full h-full -rotate-90 pointer-events-none">
               <circle
-                cx="40"
-                cy="40"
+                cx="50%"
+                cy="50%"
                 r="36"
                 fill="none"
                 stroke="white"
@@ -267,8 +269,37 @@ export function CombatHUD() {
           {isMobile ? 'TAP' : '[2]'}
         </div>
       </div>
+
+      {/* Mobile Basic Attack Button */}
+      {isMobile && (
+        <div className="flex flex-col items-center">
+          <MobileAttackButton />
+          <div className="mt-1 text-white/50 text-xs font-mono whitespace-nowrap">
+            ATK
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 export default CombatHUD;
+
+function MobileAttackButton() {
+  const attack = usePlayerStore((state) => state.attack);
+
+  return (
+    <button
+      className="relative w-20 h-20 rounded-full flex items-center justify-center border-4 transition-all duration-200 bg-red-600/80 border-red-400 active:bg-red-700 active:scale-90 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
+      onTouchStart={(e) => {
+        e.preventDefault();
+        attack();
+      }}
+    >
+      <div className="flex flex-col items-center z-10">
+        <span className="text-2xl mb-0.5">⚔️</span>
+        <span className="text-[9px] font-bold text-white uppercase tracking-wider">Attack</span>
+      </div>
+    </button>
+  );
+}

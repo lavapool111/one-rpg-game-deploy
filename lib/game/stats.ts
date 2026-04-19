@@ -115,20 +115,33 @@ const STAT_INCREMENTS = [
 
 /**
  * Calculates Max Health and Damage for a given level
+ * Uses lazy-evaluation caching to ensure O(1) lookups after initial calculation.
  */
+const STATS_CACHE: LevelStats[] = [
+    { health: 0, damage: 0 }, // index 0 unused
+    { health: 10, damage: 1 }, // Level 1
+];
+
 export function getStatsForLevel(targetLevel: number): LevelStats {
-    let health = 10;
-    let damage = 1;
+    while (targetLevel >= STATS_CACHE.length) {
+        const i = STATS_CACHE.length - 1;
+        const prev = STATS_CACHE[i];
 
-    // Level 1 has base stats. We loop from 1 to targetLevel - 1 to add increments.
-    // i represents the current level we are at, moving to i+1.
-    for (let i = 1; i < targetLevel; i++) {
-        const increment = STAT_INCREMENTS.find((inc) => i < inc.maxLevel) || STAT_INCREMENTS[STAT_INCREMENTS.length - 1];
-        health += increment.hp;
-        damage += increment.dmg;
+        // Find increment (loop backwards for speed or use simple find)
+        let increment = STAT_INCREMENTS[STAT_INCREMENTS.length - 1];
+        for (const inc of STAT_INCREMENTS) {
+            if (i < inc.maxLevel) {
+                increment = inc;
+                break;
+            }
+        }
+
+        STATS_CACHE.push({
+            health: prev.health + increment.hp,
+            damage: prev.damage + increment.dmg,
+        });
     }
-
-    return { health, damage };
+    return STATS_CACHE[targetLevel];
 }
 
 // Enemy HP multiplier bands - similar structure to STAT_INCREMENTS
@@ -151,72 +164,74 @@ const ENEMY_HP_BANDS = [
     { maxLevel: 240, mult: 0.09 },
     { maxLevel: 270, mult: -0.015 },
     { maxLevel: 300, mult: 0.10 },
-    { maxLevel: 400, mult: 0.01 },
-    { maxLevel: 500, mult: -0.003 },
+    { maxLevel: 330, mult: -0.015 },
+    { maxLevel: 360, mult: 0.11 },
+    { maxLevel: 390, mult: -0.015 },
+    { maxLevel: 420, mult: 0.12 },
+    { maxLevel: 450, mult: -0.015 },
+    { maxLevel: 480, mult: 0.13 },
+    { maxLevel: 540, mult: -0.0015 },
+    { maxLevel: 600, mult: 0.015 },
     { maxLevel: 2000, mult: 0.0001 },
 ];
 
 /**
  * Piecewise linear HP multiplier for enemies based on level.
- * Uses ENEMY_HP_BANDS to calculate cumulative multiplier.
+ * Uses cached lazy-evaluation.
  */
+const ENEMY_HP_MUL_CACHE: number[] = [0, 1]; // level 1 = 1x
+
 export function getEnemyHpMultiplier(level: number): number {
-    let multiplier = 1;
-    let prevMaxLevel = 0;
+    while (level >= ENEMY_HP_MUL_CACHE.length) {
+        const i = ENEMY_HP_MUL_CACHE.length;
 
-    for (const band of ENEMY_HP_BANDS) {
-        if (level <= prevMaxLevel) break;
+        let multiplier = 1;
+        let prevMaxLevel = 0;
 
-        const levelsInBand = Math.min(level, band.maxLevel) - prevMaxLevel;
-        multiplier += levelsInBand * band.mult;
-        prevMaxLevel = band.maxLevel;
+        for (const band of ENEMY_HP_BANDS) {
+            if (i <= prevMaxLevel) break;
+            const levelsInBand = Math.min(i, band.maxLevel) - prevMaxLevel;
+            multiplier += levelsInBand * band.mult;
+            prevMaxLevel = band.maxLevel;
+        }
+
+        if (i > prevMaxLevel) {
+            const lastBand = ENEMY_HP_BANDS[ENEMY_HP_BANDS.length - 1];
+            multiplier += (i - prevMaxLevel) * lastBand.mult;
+        }
+
+        ENEMY_HP_MUL_CACHE.push(multiplier);
     }
-
-    // Handle levels beyond the last defined band
-    if (level > prevMaxLevel) {
-        const lastBand = ENEMY_HP_BANDS[ENEMY_HP_BANDS.length - 1];
-        multiplier += (level - prevMaxLevel) * lastBand.mult;
-    }
-
-    return multiplier;
+    return ENEMY_HP_MUL_CACHE[level];
 }
 
-/**
- * Calculates XP required to advance FROM currentLevel TO currentLevel + 1
- * Consolidates the user's specific loop logic.
- */
-export function getXpRequiredForLevel(currentLevel: number): number {
-    // Logic derived from user's snippet:
-    // The user's loop calculates "XP to level X" which creates 'start'.
-    // 'start' is the amount needed for that step.
-    // We re-run the simulation up to the requested level.
+const hundred = 7560;
+const onezeroone = 15120;
 
+const bandone = [
+    5, 10, 20, 30, 40, 60, 75, 120, 160, 200, 600, 750, 900, 1050, 1200, 1350, 1500, 1800, 2100,
+    2400, 2700, 3000, 3300, 3750, 4200, 4600, 5100, 5600, 6000, 6600, 7200, 7800, 8400, 9000, 9750, 10500,
+    12000, 13000, 14000, 15000, 16500, 18000, 19500, 20400, 21600, 23800, 25200, 27200, 28800,
+    30000, 32000, 33600, 36000, 37800, 39600, 41600, 43200, 44000,
+    45600, 47800, 49500, 50400, 52800, 54600, 57600, 62400, 67800,
+    71800, 75600, 79200, 84000, 89600, 92400, 97200, 103500, 112000,
+    126000, 140000, 156000, 172000, 195000, 216000, 234000, 252000,
+    288000, 324000, 356000, 378000, 396000, 432000, 456000, 480000,
+    528000, 552000, 594000, 660000, 720000, 792000, 864000, 972000,
+    1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1840000, 2000000, 2160000,
+    3240000, 4320000, 5400000, 6720000, 7560000, 9240000, 12000000, 15600000, 20000000,
+    25200000, 32400000, 43200000, 48000000, 54000000, 64000000, 75600000, 86400000, 92400000, 105600000, 126000000,
+];
+
+// Precompute the entire XP table on startup!
+const xplookup: number[] = [0]; // Index 0 is 0
+(function initXpLookupTable() {
     let start = 0;
-    const hundred = 7560;
-    const onezeroone = 75600;
-
-    const bandone = [
-        5, 10, 20, 30, 40, 60, 75, 120, 160, 200,
-        2400, 2700, 3000, 3300, 3750, 4200, 4600, 5100, 5600, 6000, 6600, 7200, 7800, 8400, 9000, 9750, 10500,
-        12000, 13000, 14000, 15000, 16500, 18000, 19500, 20400, 21600, 23800, 25200, 27200, 28800,
-        30000, 32000, 33600, 36000, 37800, 39600, 41600, 43200, 44000,
-        45600, 47800, 49500, 50400, 52800, 54600, 57600, 62400, 67800,
-        71800, 75600, 79200, 84000, 89600, 92400, 97200, 103500, 112000,
-        126000, 140000, 156000, 172000, 195000, 216000, 234000, 252000,
-        288000, 324000, 356000, 378000, 396000, 432000, 456000, 480000,
-        528000, 552000, 594000, 660000, 720000, 792000, 864000, 972000,
-        1080000, 1200000, 1320000, 1440000, 1560000, 1680000, 1840000, 2000000, 2160000,
-        3240000, 4320000, 5400000, 6720000, 7560000, 9240000, 12000000, 15600000, 20000000,
-        25200000, 32400000, 43200000, 48000000, 54000000, 64000000, 75600000, 86400000, 92400000, 105600000, 126000000
-    ];
-
     let level = 1;
-    let alina = 10
-
+    let alina = 10;
 
     for (const one of bandone) {
         for (let i = 0; i < alina; i++) {
-            // Logic from snippet
             if (level === 100) {
                 start = hundred;
             } else if (level === 101) {
@@ -226,20 +241,26 @@ export function getXpRequiredForLevel(currentLevel: number): number {
             }
 
             if (level > 1000) {
-                alina = 100
+                alina = 100;
             }
 
-            // If we found the XP needed for the requested level, return it
-            if (level === currentLevel) {
-                return start;
-            }
-
+            xplookup[level] = start;
             level++;
         }
     }
+})();
 
-    // Fallback if level exceeds table (should be rare/impossible with this many entries ~1000 levels)
-    return start + 10000;
+/**
+ * Calculates XP required to advance FROM currentLevel TO currentLevel + 1
+ * Uses fully precomputed O(1) lookup table.
+ */
+export function getXpRequiredForLevel(currentLevel: number): number {
+    if (currentLevel < xplookup.length) {
+        return xplookup[currentLevel];
+    }
+    // Fallback if level exceeds table
+    // User logic previously appended simple additions, so we just return last element + something large
+    return xplookup[xplookup.length - 1] + (currentLevel * 10000);
 }
 
 

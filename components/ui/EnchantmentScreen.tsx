@@ -9,7 +9,7 @@ import {
     MaterialItemId,
     getRarityColor,
     getRarityBorderColor,
-    ALL_RECIPES,
+    RECIPE_MAP,
     EnchantmentId,
     EnchantmentTier,
     EnchantmentDefinition,
@@ -42,19 +42,17 @@ export function EnchantmentScreen({ onClose }: EnchantmentScreenProps) {
     ];
 
     const renderEnchantmentCard = (enchantment: EnchantmentDefinition, tier: EnchantmentTier) => {
-        const recipe = ALL_RECIPES.find(r => r.id === `enchantment_${enchantment.id}_craft`);
+        const recipe = RECIPE_MAP.get(`enchantment_${enchantment.id}_craft`);
         if (!recipe) return null;
 
         const isUnlocked = isEnchantmentSlotUnlocked(tier);
-        const canAfford = recipe.ingredients.every(ing => {
+        const canAfford = recipe.ingredients.every((ing: any) => {
             const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
             return have >= ing.quantity;
         });
         const ownedEnchant = inventory.enchantments.find(e => e.id === enchantment.id && e.tier === tier);
         const isEquipped = equippedEnchantments[tier]?.id === enchantment.id;
         const ownedIndex = inventory.enchantments.findIndex(e => e.id === enchantment.id && e.tier === tier);
-
-        // Get effect description
         let effectDesc = '';
         if (enchantment.critFactorBonus) effectDesc += `+${enchantment.critFactorBonus} Crit Factor `;
         if (enchantment.defenseBonus) effectDesc += `+${(enchantment.defenseBonus * 100).toFixed(0)}% Defense `;
@@ -70,19 +68,19 @@ export function EnchantmentScreen({ onClose }: EnchantmentScreenProps) {
             <div
                 key={`${tier}-${enchantment.id}`}
                 className={`rounded-lg border p-4 transition-all ${isEquipped
-                        ? 'border-green-500 bg-green-900/20 shadow-lg shadow-green-900/20'
-                        : ownedEnchant
-                            ? 'border-slate-600 bg-slate-800/50 hover:border-slate-500'
-                            : isUnlocked
-                                ? 'border-slate-700 bg-slate-800/30 hover:bg-slate-800/50'
-                                : 'border-slate-800 bg-slate-900/30 opacity-60'
+                    ? 'border-green-500 bg-green-900/20 shadow-lg shadow-green-900/20'
+                    : ownedEnchant
+                        ? 'border-slate-600 bg-slate-800/50 hover:border-slate-500'
+                        : isUnlocked
+                            ? 'border-slate-700 bg-slate-800/30 hover:bg-slate-800/50'
+                            : 'border-slate-800 bg-slate-900/30 opacity-60'
                     }`}
             >
                 {/* Header */}
                 <div className="flex items-start gap-3 mb-3">
                     <div className={`w-12 h-12 rounded-lg flex items-center justify-center text-2xl ${tier === 'common' ? 'bg-blue-900/30 border border-blue-600/50' :
-                            tier === 'infused' ? 'bg-purple-900/30 border border-purple-600/50' :
-                                'bg-yellow-900/30 border border-yellow-600/50'
+                        tier === 'infused' ? 'bg-purple-900/30 border border-purple-600/50' :
+                            'bg-yellow-900/30 border border-yellow-600/50'
                         }`}>
                         {tier === 'common' ? '✨' : tier === 'infused' ? '🔮' : '🌟'}
                     </div>
@@ -102,8 +100,8 @@ export function EnchantmentScreen({ onClose }: EnchantmentScreenProps) {
                 {/* Effects */}
                 <div className="mb-3">
                     <p className={`text-xs font-medium ${tier === 'common' ? 'text-blue-400' :
-                            tier === 'infused' ? 'text-purple-400' :
-                                'text-yellow-400'
+                        tier === 'infused' ? 'text-purple-400' :
+                            'text-yellow-400'
                         }`}>
                         {effectDesc}
                     </p>
@@ -121,8 +119,8 @@ export function EnchantmentScreen({ onClose }: EnchantmentScreenProps) {
                                     <div
                                         key={i}
                                         className={`px-2 py-1 rounded text-xs border ${enough
-                                                ? 'bg-slate-800/50 border-slate-600 text-slate-300'
-                                                : 'bg-red-900/20 border-red-600/50 text-red-400'
+                                            ? 'bg-slate-800/50 border-slate-600 text-slate-300'
+                                            : 'bg-red-900/20 border-red-600/50 text-red-400'
                                             }`}
                                     >
                                         {ing.quantity}x {ITEM_DEFINITIONS[ing.itemId]?.name || ing.itemId.replace(/_/g, ' ')}
@@ -147,16 +145,16 @@ export function EnchantmentScreen({ onClose }: EnchantmentScreenProps) {
                     }}
                     disabled={!isUnlocked || (!ownedEnchant && !canAfford)}
                     className={`w-full py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${isEquipped
-                            ? 'bg-red-600/80 hover:bg-red-500 text-white'
-                            : ownedEnchant
-                                ? 'bg-green-600/80 hover:bg-green-500 text-white'
-                                : isUnlocked && canAfford
-                                    ? tier === 'common'
-                                        ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
-                                        : tier === 'infused'
-                                            ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20'
-                                            : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-900/20'
-                                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                        ? 'bg-red-600/80 hover:bg-red-500 text-white'
+                        : ownedEnchant
+                            ? 'bg-green-600/80 hover:bg-green-500 text-white'
+                            : isUnlocked && canAfford
+                                ? tier === 'common'
+                                    ? 'bg-blue-600 hover:bg-blue-500 text-white shadow-lg shadow-blue-900/20'
+                                    : tier === 'infused'
+                                        ? 'bg-purple-600 hover:bg-purple-500 text-white shadow-lg shadow-purple-900/20'
+                                        : 'bg-yellow-600 hover:bg-yellow-500 text-white shadow-lg shadow-yellow-900/20'
+                                : 'bg-slate-700 text-slate-500 cursor-not-allowed'
                         }`}
                 >
                     {!isUnlocked
@@ -208,14 +206,14 @@ export function EnchantmentScreen({ onClose }: EnchantmentScreenProps) {
                                 onClick={() => isUnlocked && setActiveTier(tier.id)}
                                 disabled={!isUnlocked}
                                 className={`flex-1 py-4 px-4 text-center font-medium uppercase tracking-wider transition-all relative ${isActive
-                                        ? tier.id === 'common'
-                                            ? 'text-blue-400 bg-blue-900/20 border-b-2 border-blue-500'
-                                            : tier.id === 'infused'
-                                                ? 'text-purple-400 bg-purple-900/20 border-b-2 border-purple-500'
-                                                : 'text-yellow-400 bg-yellow-900/20 border-b-2 border-yellow-500'
-                                        : isUnlocked
-                                            ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
-                                            : 'text-slate-600 cursor-not-allowed'
+                                    ? tier.id === 'common'
+                                        ? 'text-blue-400 bg-blue-900/20 border-b-2 border-blue-500'
+                                        : tier.id === 'infused'
+                                            ? 'text-purple-400 bg-purple-900/20 border-b-2 border-purple-500'
+                                            : 'text-yellow-400 bg-yellow-900/20 border-b-2 border-yellow-500'
+                                    : isUnlocked
+                                        ? 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/30'
+                                        : 'text-slate-600 cursor-not-allowed'
                                     }`}
                             >
                                 <div className="flex items-center justify-center gap-2">

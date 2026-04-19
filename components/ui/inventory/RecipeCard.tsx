@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import { memo } from 'react';
 import { Recipe, ITEM_DEFINITIONS, MaterialItemId, ReedStrength, ItemId, getRarityBorderColor, getRarityColor } from '@/lib/game/inventory';
 import { localizeItemName } from '@/lib/store/playerStore';
 
@@ -12,7 +12,7 @@ interface RecipeCardProps {
     playerClass: 'bb_clarinet' | 'viola';
 }
 
-export function RecipeCard({ recipe, inventory, echoes, onCraft, playerClass }: RecipeCardProps) {
+export const RecipeCard = memo(function RecipeCard({ recipe, inventory, echoes, onCraft, playerClass }: RecipeCardProps) {
     const outputItem = ITEM_DEFINITIONS[recipe.outputId];
     const displayName = recipe.name || (outputItem ? localizeItemName(outputItem.name, playerClass) : recipe.outputId);
     const displayRarity = recipe.rarity || outputItem?.rarity || 'common';
@@ -72,6 +72,6 @@ export function RecipeCard({ recipe, inventory, echoes, onCraft, playerClass }: 
             </div>
         </div>
     );
-}
+});
 
 export default RecipeCard;

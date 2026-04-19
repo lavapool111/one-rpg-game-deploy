@@ -1,6 +1,6 @@
 'use client';
 
-import React from 'react';
+import { memo, type ReactNode } from 'react';
 import { getRarityColor, getRarityBorderColor, getRarityBgColor } from '@/lib/game/inventory';
 
 interface InventorySlotProps {
@@ -14,7 +14,7 @@ interface InventorySlotProps {
     onClick: () => void;
 }
 
-export function InventorySlot({ name, quantity, rarity = 'common', description, isSelected, isEquipped, onHover, onClick }: InventorySlotProps) {
+export const InventorySlot = memo(function InventorySlot({ name, quantity, rarity = 'common', description, isSelected, isEquipped, onHover, onClick }: InventorySlotProps) {
     const borderColor = isSelected ? 'border-yellow-400' : getRarityBorderColor(rarity);
     const bgColor = isSelected ? 'bg-yellow-900/20' : getRarityBgColor(rarity);
     const textColor = getRarityColor(rarity);
@@ -44,6 +44,6 @@ export function InventorySlot({ name, quantity, rarity = 'common', description, 
             <div className="absolute inset-0 rounded-lg bg-white/5 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity" />
         </div>
     );
-}
+});
 
 export default InventorySlot;

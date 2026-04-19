@@ -10,7 +10,7 @@ export function WaveUI() {
     const altarDeathCount = useGameStore((state) => state.altarDeathCount);
     const isInAltarRoom = useGameStore((state) => state.isInAltarRoom);
 
-    if (altarRoomWave === 0 || !isInAltarRoom) return null;
+    if (!isInAltarRoom) return null;
 
     const maxWaves = 5;
     const maxDeaths = 10;
@@ -20,8 +20,14 @@ export function WaveUI() {
     const progress = enemiesTotal > 0 ? ((enemiesTotal - enemiesRemaining) / enemiesTotal) * 100 : 0;
 
     return (
-        <div className="fixed top-8 left-1/2 -translate-x-1/2 z-40 pointer-events-none flex flex-col items-center">
-            {altarRoomWave <= maxWaves ? (
+        <div className="fixed top-8 left-1/2 -translate-x-1/2 z-40 pointer-events-none flex flex-col items-center w-[90vw] max-w-[380px]">
+            {altarRoomWave === 0 ? (
+                <div className="bg-black/80 border-2 border-amber-900/50 rounded-lg p-4 shadow-[0_0_15px_rgba(255,100,0,0.3)] backdrop-blur-sm min-w-[320px] text-center animate-pulse-slow">
+                    <h2 className="text-2xl font-bold text-amber-500/80 drop-shadow-md tracking-wider">
+                        AWAITING RITUAL...
+                    </h2>
+                </div>
+            ) : altarRoomWave <= maxWaves ? (
                 <>
                     <h2 className="text-2xl font-bold text-white drop-shadow-md tracking-wider mb-2">
                         ALTAR ROOM

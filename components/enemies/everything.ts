@@ -22,6 +22,8 @@ Enemies:
 - Tuba.tsx
 - FrenchHorn.tsx
 - Euphonium.tsx
+
+Enemy Helper Components:
 - UpperVaultEuphonium.tsx
 - EnemyHealthBar.tsx
 

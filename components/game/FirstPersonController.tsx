@@ -4,14 +4,16 @@ import { useRef, useEffect, useCallback, useState } from 'react';
 import { useThree, useFrame } from '@react-three/fiber';
 import { PointerLockControls as DreiPointerLockControls } from '@react-three/drei';
 import { Vector3, Euler, MathUtils } from 'three';
+import * as THREE from 'three';
 import { useGameStore, usePlayerStore } from '@/lib/store';
 import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { GAME_CONFIG } from '@/lib/game/config';
 import { Pillar } from '@/lib/game/pillars';
 import { isValidDungeonPosition } from '@/lib/game/collision';
 import { isValidBandRoomPosition } from '@/lib/game/bandRoomCollision';
-import { ALTAR_ROOM_CENTER_Z } from './AltarRoom';
 import { getFloorHeightAt, isCollidingWithObstacle } from '@/lib/game/stairCollision';
+import { checkLineOfSight } from '@/lib/game/pillars';
+import { calculateBasicAttackDamage, getEnemyDamageMultiplier } from '@/lib/enemies/damageUtils';
 
 /**
  * FirstPersonController
@@ -60,7 +62,7 @@ interface _MovementState {
 
 
 // Constants
-const DEFAULT_SPEED = 6; // feet per second
+const DEFAULT_SPEED = 4.5; // feet per second (matches GAME_CONFIG.STARTING_SPEED)
 const DEFAULT_EYE_LEVEL = 1.5; // feet
 const DEFAULT_ARENA_RADIUS = 375; // meters (matching BandRoom)
 const DEFAULT_COLLISION_MARGIN = 3; // meters from wall
@@ -78,7 +80,7 @@ export function FirstPersonController({
     pillarCollisionPadding = 0.5,
     sensitivity = 1.0,
 }: FirstPersonControllerProps) {
-    const { camera, gl } = useThree();
+    const { camera, gl, scene } = useThree();
     const controlsRef = useRef<typeof DreiPointerLockControls>(null);
 
     // Movement state
@@ -98,9 +100,13 @@ export function FirstPersonController({
 
     // Jump physics state
     const verticalVelocity = useRef(0);
+    const canJump = useRef(false);
+
+    // Combat Raycaster
+    const raycaster = useRef(new THREE.Raycaster());
+    const pointer = useRef(new THREE.Vector2(0, 0)); // Center of screen
     const isGrounded = useRef(true);
-    const GRAVITY = GAME_CONFIG.GRAVITY;
-    const JUMP_FORCE = GAME_CONFIG.STARTING_JUMP_FORCE;
+    // Gravity and jump force are read directly from GAME_CONFIG in useFrame to stay reactive
 
     // Detect mobile device
     useEffect(() => {
@@ -220,12 +226,66 @@ export function FirstPersonController({
         }, 300);
     }, []); // Empty deps = run once on mount
 
+    const performAttack = useCallback(() => {
+        const playerStore = usePlayerStore.getState();
+        const accStore = useAccessoryStore.getState();
+
+        // Trigger player store attack (sets animation state)
+        playerStore.attack();
+
+        // Perform raycast for hit detection
+        raycaster.current.setFromCamera(pointer.current, camera);
+
+        // Intersect with objects in the scene
+        const intersects = raycaster.current.intersectObjects([scene], true);
+
+        // Filter for enemy hitboxes
+        const enemyHit = intersects.find(hit => hit.object.userData?.type === 'enemy');
+
+        if (enemyHit) {
+            const enemy = enemyHit.object;
+            const dist = enemyHit.distance;
+
+            // Attack Range check (30ft)
+            if (dist > 30) return;
+
+            // LOS check
+            const playerPos = camera.position;
+            const enemyWorldPos = enemy.getWorldPosition(new Vector3());
+            const hasLOS = pillars.length === 0 || checkLineOfSight(
+                { x: playerPos.x, z: playerPos.z },
+                { x: enemyWorldPos.x, z: enemyWorldPos.z },
+                pillars
+            );
+
+            if (hasLOS) {
+                // Determine multipliers using centralized utility
+                const multiplier = getEnemyDamageMultiplier(enemy.userData, accStore);
+
+                const { damage: dmg, type: dmgType } = calculateBasicAttackDamage(
+                    playerStore.basicAttackDamage,
+                    playerStore.critChance,
+                    accStore.critFactor,
+                    multiplier
+                );
+                enemy.userData.onHit(dmg, dmgType);
+            }
+        }
+    }, [camera, pillars, gl]);
+
 
 
     // Keyboard event handlers
     const handleKeyDown = useCallback((event: KeyboardEvent) => {
         if (!enabled) return;
         if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+
+        // Attack Trigger (Enter)
+        if (event.key === 'Enter') {
+            performAttack();
+            event.preventDefault();
+        }
+
         keys.current.add(event.code);
     }, [enabled]);
 
@@ -233,16 +293,29 @@ export function FirstPersonController({
         keys.current.delete(event.code);
     }, []);
 
-    // Set up event listeners for keyboard
+    // Set up event listeners for keyboard and mouse
     useEffect(() => {
+        const handleMouseDown = (event: MouseEvent) => {
+            // Check document.pointerLockElement directly to ensure we're actually locked
+            // This is more reliable than isLocked state which might lag by a frame
+            const hasLock = !!document.pointerLockElement;
+            if (!enabled || !hasLock) return;
+
+            if (event.button === 0) { // Left Click
+                performAttack();
+            }
+        };
+
         document.addEventListener('keydown', handleKeyDown);
         document.addEventListener('keyup', handleKeyUp);
+        document.addEventListener('mousedown', handleMouseDown);
 
         return () => {
             document.removeEventListener('keydown', handleKeyDown);
             document.removeEventListener('keyup', handleKeyUp);
+            document.removeEventListener('mousedown', handleMouseDown);
         };
-    }, [handleKeyDown, handleKeyUp]);
+    }, [handleKeyDown, handleKeyUp, enabled, isLocked]);
 
     // Current location for collision mode
     const currentLocation = useGameStore((state) => state.currentLocation);
@@ -309,9 +382,8 @@ export function FirstPersonController({
         const moveBackward = k.has('KeyS') || k.has('ArrowDown');
         const moveLeft = k.has('KeyA') || k.has('ArrowLeft');
         const moveRight = k.has('KeyD') || k.has('ArrowRight');
-        const moveSprint = k.has('KeyQ');
+        const moveSprint = k.has('KeyQ') || k.has('ShiftLeft') || k.has('ShiftRight');
 
-        // Q acts as Forward + Sprint
         // Q acts as Forward + Sprint
         const finalForward = moveForward || moveSprint;
         const isSprinting = moveSprint;
@@ -320,6 +392,8 @@ export function FirstPersonController({
         const playerState = usePlayerStore.getState();
         const joystick = playerState.input.joystick;
         const look = playerState.input.look;
+        const mobileJump = playerState.input.jump;
+        const mobileSprint = playerState.input.sprint;
 
         // Apply touch look (mobile)
         if (look.x !== 0 || look.y !== 0) {
@@ -358,7 +432,7 @@ export function FirstPersonController({
         const hasHorizontalMovement = direction.current.length() > 0;
 
         // Check if player wants to jump or is in the air
-        const wantsJump = keys.current.has('Space') && !isStunned; // Disable jump if stunned
+        const wantsJump = (keys.current.has('Space') || mobileJump) && !isStunned; // Disable jump if stunned
         const needsGravity = !isGrounded.current || wantsJump;
 
         // Skip frame only if no movement AND no jump activity needed
@@ -371,6 +445,12 @@ export function FirstPersonController({
         if (hasHorizontalMovement) {
             // Normalize for consistent speed in diagonal movement (or mixed input)
             direction.current.normalize();
+
+            // Air Control: Slightly reduce steering sensitivity in air if not moving forward
+            // (Standard FPS feel: strong air control only if holding forward)
+            if (!isGrounded.current && !finalForward) {
+                direction.current.multiplyScalar(0.8);
+            }
 
             // Update last move time for anti-camping detection
             usePlayerStore.getState().updateMoveTime();
@@ -390,9 +470,15 @@ export function FirstPersonController({
             // If stunned, skip all movement processing
             if (isStunned) return;
 
-            // Apply speed modifier to base speed (using dynamic player stat instead of hardcode)
-            const playerSpeedStat = playerState.speed;
-            const currentSpeed = (isSprinting ? playerSpeedStat * GAME_CONFIG.SPRINT_FACTOR : playerSpeedStat) * speedModifier;
+            // Apply speed modifier to the provided speed prop (which represents calculated store stats)
+            // This ensures HUD speed and movement speed are perfectly synchronized.
+            const playerSpeedStat = speed;
+            const isSprintingFinal = isSprinting || mobileSprint;
+
+            // Sprint Jump Boost: 1.15x extra speed if jumping while sprinting (rewarding aerial movement)
+            const sprintJumpFactor = (isSprintingFinal && !isGrounded.current) ? 1.05 : 1.0;
+            const currentSpeed = (isSprintingFinal ? playerSpeedStat * GAME_CONFIG.SPRINT_FACTOR : playerSpeedStat) * speedModifier * sprintJumpFactor;
+
             velocity.current.copy(direction.current).multiplyScalar(currentSpeed * safeDelta);
 
             // Apply horizontal movement
@@ -505,10 +591,9 @@ export function FirstPersonController({
             }
         } // End of horizontal movement block
 
-        // ========== JUMP PHYSICS (runs every frame) ==========
         // Initiate jump if grounded and Space pressed
         if (wantsJump && isGrounded.current) {
-            verticalVelocity.current = JUMP_FORCE;
+            verticalVelocity.current = GAME_CONFIG.STARTING_JUMP_FORCE;
             isGrounded.current = false;
         }
 
@@ -520,7 +605,7 @@ export function FirstPersonController({
 
         // Apply gravity
         if (!isGrounded.current) {
-            verticalVelocity.current -= GRAVITY * safeDelta;
+            verticalVelocity.current -= GAME_CONFIG.GRAVITY * safeDelta;
             newPosition.y = camera.position.y + verticalVelocity.current * safeDelta;
 
             // Check for landing on floor or stairs

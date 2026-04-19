@@ -13,6 +13,7 @@ type GameConfig = {
     GRAVITY: number;
     SPRINT_FACTOR: number;
     DISABLE_ALTAR_GATES: boolean;
+    DISABLE_ALTAR_LORE: boolean;
     AUTO_BUILD: boolean;
     STARTING_MATERIALS: {
         valves: number;
@@ -37,7 +38,7 @@ type GameConfig = {
 // --- Normal Game (main page) ---
 export const NORMAL_CONFIG: GameConfig = {
     // Player Starting Stats
-    STARTING_LEVEL: 1,
+    STARTING_LEVEL: 100,
 
     // Dungeon Settings
     BASE_DUNGEON_TIME: 20, // seconds
@@ -48,11 +49,12 @@ export const NORMAL_CONFIG: GameConfig = {
     // Debug Starting Resources
     STARTING_ECHOES: 0,
     STARTING_EMBOUCHURE: 1,
-    STARTING_SPEED: 4.5, // Default for now, can be changed easily
-    STARTING_JUMP_FORCE: 12, // 12 is normal gravity
-    GRAVITY: 30, // 30 is normal gravity
+    STARTING_SPEED: 7.5, // Default for now, can be changed easily
+    STARTING_JUMP_FORCE: 18, // Optimized for snappier jumping.
+    GRAVITY: 60, // Optimized for slightly faster jumping.
     SPRINT_FACTOR: 2,
     DISABLE_ALTAR_GATES: false,
+    DISABLE_ALTAR_LORE: false,
     AUTO_BUILD: false,
 
     // Debug Starting Materials (set all to 0 for normal gameplay)
@@ -95,6 +97,7 @@ export const BACKSTAGE_HALLS_CONFIG: GameConfig = {
     GRAVITY: 30,
     SPRINT_FACTOR: 2,
     DISABLE_ALTAR_GATES: false,
+    DISABLE_ALTAR_LORE: false,
     AUTO_BUILD: false,
 
     // Starting Materials
@@ -121,7 +124,7 @@ export const BACKSTAGE_HALLS_CONFIG: GameConfig = {
 // --- Altar Room Demo ---
 export const ALTAR_ROOM_CONFIG: GameConfig = {
     // High level for Altar testing
-    STARTING_LEVEL: 1756,
+    STARTING_LEVEL: 1000000,
 
     // Long time for testing
     BASE_DUNGEON_TIME: 1800,
@@ -131,12 +134,13 @@ export const ALTAR_ROOM_CONFIG: GameConfig = {
 
     // Starting Resources
     STARTING_ECHOES: 1000000,
-    STARTING_EMBOUCHURE: 100,
-    STARTING_SPEED: 10.0,
+    STARTING_EMBOUCHURE: 540,
+    STARTING_SPEED: 15,
     STARTING_JUMP_FORCE: 12,
     GRAVITY: 30,
     SPRINT_FACTOR: 4,
     DISABLE_ALTAR_GATES: true,
+    DISABLE_ALTAR_LORE: true,
     AUTO_BUILD: true,
 
     // Starting Materials

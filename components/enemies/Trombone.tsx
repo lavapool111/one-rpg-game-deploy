@@ -1,18 +1,20 @@
 'use client';
 
-import { useRef, useState, useEffect, useMemo, createContext, useContext } from 'react';
+import { useRef, useState, useEffect, useMemo, createContext, useContext, memo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
-import { Group, Vector3 } from 'three';
+import { Group } from 'three';
 import * as THREE from 'three';
-import { usePlayerStore, useGameStore, useAccessoryStore, useInventoryStore } from '@/lib/store';
+import { usePlayerStore, useGameStore } from '@/lib/store';
 import { Merged } from '@react-three/drei';
 import { EnemyHealthBar } from './EnemyHealthBar';
-import { getStatsForLevel, getEnemyHpMultiplier } from '@/lib/game/stats';
-import { calculateBasicAttackDamage, calculateAbilityDamage } from '@/lib/game/damageUtils';
-import { applyEnemyMovement, shouldUpdateEnemyFrame } from '@/lib/game/enemyMovement';
-import { getTromboneDrops } from '@/lib/game/enemyDrops';
+import { getStatsForLevel } from '@/lib/game/stats';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { getTromboneDrops } from '@/lib/enemies/enemyDrops';
+import { useEnemyState } from '@/lib/enemies/useEnemyState';
+import { roundToTenths, processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
+import { hitboxMat } from '@/lib/enemies/enemyMaterials';
 import { Pillar, checkLineOfSight } from '@/lib/game/pillars';
-import { getFloorHeightAt } from '@/lib/game/stairCollision';
+import { applyOvertonePushback, applyLongToneDamage, updatePoisonDot } from '@/lib/enemies/abilityUtils';
 
 /**
  * Trombone Enemy Component
@@ -48,22 +50,17 @@ const GLISSANDO_SCALE_FFF = 0.15;
 const SLIDE_SCALE = 1.5;
 const BASE_TICK_RATE = 0.5;
 
-function roundToTenths(value: number): number {
-    return Math.round(value * 10) / 10;
-}
+
 
 /**
  * Calculate Trombone stats for a given level
  * Uses same base stats as player from getStatsForLevel(), then applies enemy multipliers
  */
 function getTromboneStats(level: number): { health: number; damage: number; } {
-    const baseStats = getStatsForLevel(level);
-
-    // Health: base stats * 3x enemy multiplier * HP scaling
-    const hpMultiplier = getEnemyHpMultiplier(level);
-    const health = roundToTenths(baseStats.health * 3 * hpMultiplier);
+    const health = calculateEnemyHealth(level, 3); // 3x base health
 
     // Damage: use base stats damage directly (scaled in attack logic)
+    const baseStats = getStatsForLevel(level);
     const damage = baseStats.damage;
 
     return { health, damage };
@@ -123,10 +120,7 @@ const bellMatAttacking = new THREE.MeshStandardMaterial({
     emissiveIntensity: 0.5
 });
 
-const hitboxMat = new THREE.MeshBasicMaterial({
-    transparent: true,
-    opacity: 0
-});
+
 
 export const TromboneContext = createContext<any>(null);
 
@@ -153,70 +147,50 @@ export function TromboneInstances({ children }: { children: React.ReactNode }) {
     );
 }
 
-export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], teleportToCenterOnOOB = false, models: propModels }: TromboneProps) {
+export const Trombone = memo(function Trombone({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], teleportToCenterOnOOB = false, models: propModels }: TromboneProps) {
     const contextModels = useContext(TromboneContext);
     const models = propModels || contextModels;
     const groupRef = useRef<Group>(null);
     const slideRef = useRef<Group>(null);
-    const healthBarRef = useRef<Group>(null);
     const { camera } = useThree();
-    const gameState = useGameStore((state) => state.gameState);
+    // gameState is now provided by useEnemyState
 
     const stats = getTromboneStats(level);
     const MAX_HEALTH = stats.health;
     // We store base damage to apply multipliers dynamically
     const BASE_DAMAGE = stats.damage;
 
-    // Enemy state - use refs to avoid re-renders on damage
-    const healthRef = useRef(MAX_HEALTH);
-    const [currentHealth, setCurrentHealth] = useState(MAX_HEALTH);
-    const [isAlive, setIsAlive] = useState(true);
-    const rewardGranted = useRef(false);
+    const {
+        healthRef, currentHealth, setCurrentHealth,
+        isAlive, setIsAlive,
+        lastTickTime, lastAttackTime, rewardGranted, poisonState,
+        isLongToneActive, playerDamage, basicAttackDamage, playerTakeDamage,
+        simulationActive, gameState,
+        damageNumberRef,
+        enemyPos, playerPos, direction, playerDistanceRef,
+        frameCounter, accumulatedDelta, unitScale,
+        isAttacking, setIsAttacking,
+        wanderDirection, lastWanderChange
+    } = useEnemyState(initialPosition, MAX_HEALTH);
 
-    // Poison DOT state
-    const poisonState = useRef<{ isActive: boolean; endTime: number; damagePerSecond: number }>({
-        isActive: false,
-        endTime: 0,
-        damagePerSecond: 0
-    });
-
-    // Cooldowns
+    // Trombone-specific Cooldowns
     const lastGlissandoTime = useRef(0);
     const lastSlideTime = useRef(0);
     const glissandoStartTime = useRef(0);
 
-    // Damage logic state - use selective subscriptions to avoid mass re-renders
-    const isLongToneActive = usePlayerStore((state) => state.isLongToneActive);
-    const basicAttackDamage = usePlayerStore((state) => state.basicAttackDamage);
-    const damageNumberRef = useRef<{ value: number, time: number, type?: 'normal' | 'crit' | 'superCrit' } | null>(null);
-
-    // Movement vectors
-    const enemyPos = useRef(new Vector3(...initialPosition));
-    const playerPos = useRef(new Vector3());
-    const direction = useRef(new Vector3());
-    const playerDistanceRef = useRef(0); // For health bar visibility
-    const frameCounter = useRef(0); // For tiered frame skip
-    const accumulatedDelta = useRef(0);
-
-    // Attack states
+    // Trombone-specific Attack states
     const [isGlissandoActive, setIsGlissandoActive] = useState(false);
     const [isSlideAttacking, setIsSlideAttacking] = useState(false);
     const [isSlideCharging, setIsSlideCharging] = useState(false); // 3s warning before poke
     const slideChargeStartTime = useRef(0);
     const SLIDE_CHARGE_DURATION = 3; // 3 seconds of warning
-
-    // Wander state (when not aggroed)
-    const wanderDirection = useRef(new Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize());
-    const lastWanderChange = useRef(0);
     const WANDER_CHANGE_INTERVAL = 3 + Math.random() * 2;
-
-    const playerTakeDamage = usePlayerStore((state) => state.takeDamage);
 
     // Despawn timer for high-level enemies (> player level + 20)
     if (!id.includes("wave")) {
         useEffect(() => {
             const playerLevel = usePlayerStore.getState().level;
-            const levelThreshold = Math.max(playerLevel + 20, playerLevel * 1.65);
+            const levelThreshold = Math.max(playerLevel + 20, playerLevel * 2.15);
 
             // Only set despawn timer if enemy level exceeds player level + 20
             if (level > levelThreshold) {
@@ -241,7 +215,7 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
         // Cap delta to prevent huge jumps after frame stalls (e.g., shader compilation)
         const cappedDelta = Math.min(delta, 0.1);
 
-        if (!groupRef.current || !isAlive || gameState !== 'playing') return;
+        if (!groupRef.current || !isAlive || !simulationActive) return;
 
         // Kill floor check: if enemy fell to a catch floor (Y=-1000), instantly kill
         if (enemyPos.current.y < -500) {
@@ -252,24 +226,9 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
             return;
         }
 
-        // --- Overtone Stun Logic ---
-        const stateObj = usePlayerStore.getState();
-        if (stateObj.lastOvertoneCastTime > lastHitByOvertone.current) {
-            lastHitByOvertone.current = stateObj.lastOvertoneCastTime;
-            const pPos = new Vector3(...stateObj.position);
-            if (pPos.distanceTo(enemyPos.current) <= 10.0) {
-                overtoneStunEndTime.current = Date.now() + 2000;
-            }
-        }
-
-        const isStunnedByOvertone = Date.now() < overtoneStunEndTime.current;
-        if (isStunnedByOvertone) {
-            const gameStoreState = useGameStore.getState();
-            const currentLocation = gameStoreState.currentLocation;
-            const floorY = getFloorHeightAt(enemyPos.current.x, enemyPos.current.z, enemyPos.current.y, 0.3, currentLocation);
-            enemyPos.current.y = floorY + (BODY_HEIGHT / 2);
-            groupRef.current.position.copy(enemyPos.current);
-            playerPos.current.fromArray(stateObj.position);
+        // --- Overtone Shield Pushback Logic ---
+        if (applyOvertonePushback(enemyPos.current, groupRef.current, BODY_HEIGHT, cappedDelta)) {
+            playerPos.current.fromArray(usePlayerStore.getState().position);
             return;
         }
 
@@ -283,10 +242,6 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
 
         const gameStoreState = useGameStore.getState();
         const currentLocation = gameStoreState.currentLocation;
-
-        if (healthBarRef.current) {
-            healthBarRef.current.visible = currentHealth < MAX_HEALTH || distanceToPlayer <= SIGHT_RANGE;
-        }
 
         // Removed DOM update
 
@@ -447,6 +402,8 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
         }
 
         // Always sync group position to enemyPos
+        applySeparation(id, enemyPos.current, 'trombone');
+        registerEnemyPosition(id, enemyPos.current.x, enemyPos.current.z, 'trombone', takeDamage);
         groupRef.current.position.copy(enemyPos.current);
 
         // Rotation - face player if aggroed, else face wander direction
@@ -477,77 +434,19 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
             }
         }
 
-        // --- INCOMING DAMAGE (Long Tone) ---
-        // (Similar to Trumpet)
-        if (isLongToneActive || poisonState.current.isActive) {
-            const now = state.clock.elapsedTime;
-
-            // Get ability upgrade stats for Tier 2 bonuses
-            const playerState = usePlayerStore.getState();
-            const abilityStats = playerState.getAbilityUpgradeStats();
-            const tickSpeedMultiplier = 1 + (abilityStats.tickSpeedBonus || 0);
-            const effectiveTickRate = BASE_TICK_RATE / tickSpeedMultiplier;
-
-            // Handle Poison DOT (applies even if Long Tone is not active)
-            if (poisonState.current.isActive) {
-                if (now >= poisonState.current.endTime) {
-                    // Poison expired
-                    poisonState.current.isActive = false;
-                } else if (now - lastGlissandoTime.current >= 0.5) {
-                    // Apply poison DOT damage
-                    const dotDamage = poisonState.current.damagePerSecond * 0.5;
-                    if (dotDamage > 0) {
-                        takeDamage(dotDamage);
-                        lastGlissandoTime.current = now;
-                    }
-                }
-            }
-
-            // Handle Long Tone damage
-            if (isLongToneActive && now - lastGlissandoTime.current > 0.5) {
-                const dist = groupRef.current.position.distanceTo(playerPos.current);
-
-                // Get ability upgrade stats
-                const playerState = usePlayerStore.getState();
-                const abilityStats = playerState.getAbilityUpgradeStats();
-                const baseRange = 20; // Base 20 feet range
-                const effectiveRange = baseRange + (abilityStats.rangeBonus || 0);
-
-                if (dist < effectiveRange) {
-                    // Formula: (Damage * 0.15 * damageMultiplier * (1 + baseDamageBonus)) - Defense
-                    const playerDamage = playerState.damage;
-                    const { damage: rawDamage, type: dmgType } = calculateAbilityDamage(playerDamage, abilityStats);
-                    const finalDamage = Math.max(0, rawDamage); // Defense 0
-
-                    if (finalDamage > 0) {
-                        takeDamage(finalDamage, dmgType);
-
-                        // Apply knockback from impactBonus (Tier 2 Brute Force stat) - 1 foot per impact point
-                        const knockbackDistance = abilityStats.impactBonus || 0;
-                        if (knockbackDistance > 0 && direction.current.length() > 0.01) {
-                            const knockbackDir = direction.current.clone().normalize().negate();
-                            enemyPos.current.addScaledVector(knockbackDir, knockbackDistance);
-                        }
-
-                        lastGlissandoTime.current = now;
-
-                        // Apply Poison DOT if player has poison upgrades
-                        if (abilityStats.dotDamagePerSecond > 0 && abilityStats.dotDuration > 0) {
-                            poisonState.current = {
-                                isActive: true,
-                                endTime: now + abilityStats.dotDuration,
-                                damagePerSecond: abilityStats.dotDamagePerSecond * playerDamage * 0.15
-                            };
-                        }
-
-                        // Brass Essence drop (2% chance per enemy hit by ability damage)
-                        if (Math.random() < 0.02) {
-                            useInventoryStore.getState().addMaterial('brass_essence', 1);
-                        }
-                    }
-                }
-            }
-        }
+        // --- INCOMING DAMAGE (Long Tone & Poison) ---
+        updatePoisonDot(currentTime, poisonState, lastTickTime, takeDamage);
+        applyLongToneDamage(
+            enemyPos.current,
+            playerPos.current,
+            isLongToneActive,
+            lastTickTime,
+            currentTime,
+            takeDamage,
+            poisonState,
+            pillars,
+            direction.current
+        );
     });
 
     // Handle death - checked in takeDamage instead of useEffect to avoid useState dependency
@@ -555,46 +454,20 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
         if (rewardGranted.current) return;
         rewardGranted.current = true;
         setIsAlive(false);
-        const playerStore = usePlayerStore.getState();
-        // Use registerKill for Tempo system (handles XP with bonus)
-        let one = 1.5
-        if (id.includes('wave-')) {
-            if (id.includes('wave-enemy-1')) {
-                one *= 1.5
-            } else if (id.includes('wave-enemy-2')) {
-                one *= 2
-            } else if (id.includes('wave-enemy-3')) {
-                one *= 3
-            } else if (id.includes('wave-enemy-4')) {
-                one *= 4
-            } else if (id.includes('wave-enemy-5')) {
-                one *= 5
-            }
-        }
-        playerStore.registerKill(level, one); // Trombone gives 1.5x XP
-        useAccessoryStore.getState().addEmbouchureXp(35);
-
-        // Drops Logic
-        const gameStore = useGameStore.getState();
-        const currentLocation = gameStore.currentLocation;
-        if (currentLocation === 'backstage_halls') {
-            gameStore.collectGold(Math.floor(6 * (1 + level / 150)));
-        }
-
-        const drops = getTromboneDrops(level, currentLocation);
-
-        if (Object.keys(drops).length > 0) {
-            if (drops.echoes) { playerStore.collectEchoes(drops.echoes); delete drops.echoes; }
-            if (Object.keys(drops).length > 0) useInventoryStore.getState().addMaterials(drops);
-        }
-
-        onDeath?.(id);
+        processEnemyDeath({
+            id,
+            level,
+            baseXpMultiplier: 1.5,
+            embouchureXp: 35,
+            goldFormula: (lvl) => Math.floor(6 * (1 + lvl / 150)),
+            getDrops: getTromboneDrops,
+            onDeath,
+        });
     };
 
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
         const newHealth = Math.max(0, healthRef.current - amount);
         healthRef.current = newHealth;
-        setCurrentHealth(newHealth);
         damageNumberRef.current = { value: Number(amount.toFixed(2)), time: Date.now(), type };
 
         // Check for death
@@ -607,94 +480,87 @@ export function Trombone({ id, initialPosition, level = 1, onDeath, pillars = []
     const [isReady, setIsReady] = useState(false);
     useEffect(() => {
         const t = setTimeout(() => setIsReady(true), 50);
-        return () => clearTimeout(t);
-    }, []);
-
-    if (!isAlive || !isReady) return null;
+        return () => {
+            clearTimeout(t);
+            unregisterEnemyPosition(id);
+        };
+    }, [id]);
 
     // Visuals
     const isBuffing = isGlissandoActive;
 
+    if (!isReady) return null;
+
     return (
         <group ref={groupRef} position={initialPosition}>
-            {/* Slide Part (animated) - glows red when charging */}
-            <group ref={slideRef} position={[0, BODY_HEIGHT / 2, 1]}>
-                {models ? (
-                    isSlideCharging ? (
-                        <models.slideCharging rotation={[Math.PI / 2, 0, 0]} />
+            {isAlive && isReady && (
+                <group>
+                    {/* Slide Part (animated) - glows red when charging */}
+                    <group ref={slideRef} position={[0, BODY_HEIGHT / 2, 1]}>
+                        {models ? (
+                            isSlideCharging ? (
+                                <models.slideCharging rotation={[Math.PI / 2, 0, 0]} />
+                            ) : (
+                                <models.slide rotation={[Math.PI / 2, 0, 0]} />
+                            )
+                        ) : (
+                            <mesh rotation={[Math.PI / 2, 0, 0]} geometry={slideGeo} material={isSlideCharging ? slideMatCharging : slideMat} />
+                        )}
+                    </group>
+
+                    {/* Main Body */}
+                    {models ? (
+                        isBuffing ? (
+                            <models.mainBodyBuffing position={[0, BODY_HEIGHT / 2, -0.5]} rotation={[Math.PI / 2, 0, 0]} />
+                        ) : (
+                            <models.mainBody position={[0, BODY_HEIGHT / 2, -0.5]} rotation={[Math.PI / 2, 0, 0]} />
+                        )
                     ) : (
-                        <models.slide rotation={[Math.PI / 2, 0, 0]} />
-                    )
-                ) : (
-                    <mesh rotation={[Math.PI / 2, 0, 0]} geometry={slideGeo} material={isSlideCharging ? slideMatCharging : slideMat} />
-                )}
-            </group>
+                        <mesh position={[0, BODY_HEIGHT / 2, -0.5]} rotation={[Math.PI / 2, 0, 0]} geometry={mainBodyGeo} material={isBuffing ? mainBodyMatBuffing : mainBodyMat} />
+                    )}
 
-            {/* Main Body */}
-            {models ? (
-                isBuffing ? (
-                    <models.mainBodyBuffing position={[0, BODY_HEIGHT / 2, -0.5]} rotation={[Math.PI / 2, 0, 0]} />
-                ) : (
-                    <models.mainBody position={[0, BODY_HEIGHT / 2, -0.5]} rotation={[Math.PI / 2, 0, 0]} />
-                )
-            ) : (
-                <mesh position={[0, BODY_HEIGHT / 2, -0.5]} rotation={[Math.PI / 2, 0, 0]} geometry={mainBodyGeo} material={isBuffing ? mainBodyMatBuffing : mainBodyMat} />
-            )}
+                    {/* Bell */}
+                    {models ? (
+                        isSlideAttacking ? (
+                            <models.bellAttacking position={[0, BODY_HEIGHT / 2, 2]} rotation={[-Math.PI / 2, 0, 0]} />
+                        ) : (
+                            <models.bell position={[0, BODY_HEIGHT / 2, 2]} rotation={[-Math.PI / 2, 0, 0]} />
+                        )
+                    ) : (
+                        <mesh position={[0, BODY_HEIGHT / 2, 2]} rotation={[-Math.PI / 2, 0, 0]} geometry={bellGeo} material={isSlideAttacking ? bellMatAttacking : bellMat} />
+                    )}
 
-            {/* Bell */}
-            {models ? (
-                isSlideAttacking ? (
-                    <models.bellAttacking position={[0, BODY_HEIGHT / 2, 2]} rotation={[-Math.PI / 2, 0, 0]} />
-                ) : (
-                    <models.bell position={[0, BODY_HEIGHT / 2, 2]} rotation={[-Math.PI / 2, 0, 0]} />
-                )
-            ) : (
-                <mesh position={[0, BODY_HEIGHT / 2, 2]} rotation={[-Math.PI / 2, 0, 0]} geometry={bellGeo} material={isSlideAttacking ? bellMatAttacking : bellMat} />
-            )}
-
-            {/* Hitbox */}
-            <mesh
-                onClick={(e) => {
-                    e.stopPropagation();
-
-                    // Range Check (Clarinet Range: 30ft)
-                    const dist = enemyPos.current.distanceTo(playerPos.current);
-                    if (dist > 30) return;
-
-                    const hasLOS = pillars.length === 0 || checkLineOfSight(
-                        { x: playerPos.current.x, z: playerPos.current.z },
-                        { x: enemyPos.current.x, z: enemyPos.current.z },
-                        pillars
-                    );
-                    if (hasLOS) {
-                        // NERF: Basic attack deals 50% damage
-                        const { damage: dmg, type: dmgType, isCrit, isSuperCrit } = calculateBasicAttackDamage(basicAttackDamage);
-                        if (isCrit) console.log(isSuperCrit ? "SUPER-CRITICAL HIT on Trombone!" : "CRITICAL HIT on Trombone!");
-                        takeDamage(dmg, dmgType);
-                    }
-                }}
-                visible={false}
-                geometry={hitboxGeo}
-                material={hitboxMat}
-            />
-
-            {/* Health Bar UI */}
-            {gameState === 'playing' && (
-                <group position={[0, BODY_HEIGHT + 1, 0]} ref={healthBarRef}>
-                    <EnemyHealthBar
-                        health={currentHealth}
-                        maxHealth={MAX_HEALTH}
-                        level={level}
-                        visible={currentHealth < MAX_HEALTH || playerDistanceRef.current <= SIGHT_RANGE}
-                        enemyType="trombone"
-                        damageTextValue={damageNumberRef.current?.value}
-                        damageTextTime={damageNumberRef.current?.time}
-                        damageTextType={damageNumberRef.current?.type}
+                    {/* Hitbox */}
+                    <mesh
+                        ref={(m) => {
+                            if (m) {
+                                m.userData.onHit = (dmg: number, type: any) => takeDamage(dmg, type);
+                                m.userData.type = 'enemy';
+                                m.userData.enemyType = 'trombone';
+                                m.userData.id = id;
+                            }
+                        }}
+                        visible={true}
+                        geometry={hitboxGeo}
+                        material={hitboxMat}
                     />
                 </group>
             )}
+
+            {/* Health Bar UI */}
+            <EnemyHealthBar
+                healthRef={healthRef}
+                maxHealth={MAX_HEALTH}
+                level={level}
+                playerDistanceRef={playerDistanceRef}
+                enemyType="trombone"
+                damageTextRef={damageNumberRef}
+                enemyPosRef={enemyPos}
+                yOffset={3}
+                visible={gameState === 'playing' && isAlive && isReady}
+            />
         </group>
     );
-}
+});
 
 export default Trombone;

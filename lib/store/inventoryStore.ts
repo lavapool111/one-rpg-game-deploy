@@ -7,8 +7,10 @@ import {
     getInitialInventory,
     MaterialItemId,
     ReedStrength,
-    ALL_RECIPES,
+    RECIPE_MAP,
+    MouthpieceId,
 } from "../game/inventory";
+import { calculateIngredientsXp } from "../game/xp";
 
 /**
  * Inventory Store
@@ -28,10 +30,12 @@ export interface InventoryState {
     removeMaterial: (itemId: MaterialItemId, quantity: number) => boolean;
     removeReed: (strength: ReedStrength, quantity: number) => boolean;
     craftRecipe: (recipeId: string) => boolean;
+    obtainMouthpiece: (id: MouthpieceId, level: number) => void;
 
     // For cross-store sync
     setEchoes: (echoes: number) => void;
     syncEchoes: (delta: number) => void;
+    loadState: (saved: any) => void;
 }
 
 export const useInventoryStore = create<InventoryState>()(
@@ -40,13 +44,14 @@ export const useInventoryStore = create<InventoryState>()(
         echoes: 0,
         version: 0,
 
-        setEchoes: (echoes) => set({
+        setEchoes: (echoes) => set((state) => ({
             echoes,
             inventory: {
-                ...get().inventory,
-                materials: { ...get().inventory.materials, echoes },
+                ...state.inventory,
+                materials: { ...state.inventory.materials, echoes },
             },
-        }),
+            version: state.version + 1,
+        })),
 
         syncEchoes: (delta) => set((state) => ({
             echoes: state.echoes + delta,
@@ -104,6 +109,28 @@ export const useInventoryStore = create<InventoryState>()(
             version: state.version + 1,
         })),
 
+        obtainMouthpiece: (id: MouthpieceId, level: number) => set((state) => {
+            const newMouthpieces = [...state.inventory.mouthpieces];
+            const existingIndex = newMouthpieces.findIndex(mp => mp.id === id);
+
+            if (existingIndex >= 0) {
+                // If they already have it, we only keep it if the new level is higher
+                if (level > newMouthpieces[existingIndex].level) {
+                    newMouthpieces[existingIndex] = { id, level };
+                }
+            } else {
+                newMouthpieces.push({ id, level });
+            }
+
+            return {
+                inventory: {
+                    ...state.inventory,
+                    mouthpieces: newMouthpieces
+                },
+                version: state.version + 1
+            };
+        }),
+
         removeMaterial: (itemId, quantity) => {
             const state = get();
             const currentQty = state.inventory.materials[itemId];
@@ -120,9 +147,10 @@ export const useInventoryStore = create<InventoryState>()(
                 return true;
             }
 
-            set({
+            set((state) => ({
                 inventory: { ...state.inventory, materials: newMaterials },
-            });
+                version: state.version + 1,
+            }));
             return true;
         },
 
@@ -146,7 +174,7 @@ export const useInventoryStore = create<InventoryState>()(
 
         craftRecipe: (recipeId) => {
             const state = get();
-            const recipe = ALL_RECIPES.find(r => r.id === recipeId);
+            const recipe = RECIPE_MAP.get(recipeId);
             if (!recipe) return false;
 
             // Check ingredients
@@ -201,6 +229,20 @@ export const useInventoryStore = create<InventoryState>()(
                     }
                 } else if (recipe.outputId in newMaterials) {
                     newMaterials[recipe.outputId as MaterialItemId] = (newMaterials[recipe.outputId as MaterialItemId] || 0) + recipe.outputQuantity;
+
+                    // Award XP for materials/other crafts based on inputs
+                    const xpReward = calculateIngredientsXp(recipe.ingredients);
+                    if (xpReward > 0) {
+                        const { usePlayerStore } = require('./playerStore');
+                        usePlayerStore.getState().addXp(xpReward);
+                    }
+                } else {
+                    // Fallback for any other recipe types (like placeholders or future categories)
+                    const xpReward = calculateIngredientsXp(recipe.ingredients);
+                    if (xpReward > 0) {
+                        const { usePlayerStore } = require('./playerStore');
+                        usePlayerStore.getState().addXp(xpReward);
+                    }
                 }
 
                 return {
@@ -209,9 +251,17 @@ export const useInventoryStore = create<InventoryState>()(
                     version: state.version + 1,
                 };
             });
-
             return true;
         },
+
+        loadState: (saved: any) => set((state) => {
+            if (!saved.inventory) return state;
+            return {
+                inventory: saved.inventory,
+                echoes: saved.echoes ?? state.echoes,
+                version: state.version + 1,
+            };
+        }),
     }))
 );
 

@@ -1,9 +1,9 @@
 'use client';
 
-import { useRef, useMemo, createContext, useContext, useEffect, memo, forwardRef } from 'react';
+import { useRef, useMemo, createContext, useContext, useEffect, memo, forwardRef, useState } from 'react';
 import { useFrame } from '@react-three/fiber';
 import AudioManager from '@/lib/audio/AudioManager';
-import { usePlayerStore } from '@/lib/store'; // Import player store for position tracking
+import { useGameStore, usePlayerStore } from '@/lib/store'; // Import stores for state tracking
 import {
     BackSide,
     DoubleSide,
@@ -20,6 +20,7 @@ import {
 } from 'three';
 import { generatePillars, type Pillar, type PillarConfig } from '@/lib/game/pillars';
 import { DungeonDoor } from './DungeonDoor';
+import { OuterBackstageDoor } from './OuterBackstageDoor';
 
 /**
  * BandRoom Component
@@ -75,31 +76,9 @@ export function BandRoom({
 }: BandRoomProps) {
     const spotlightRefs = useRef<ThreeSpotLight[]>([]);
 
-    // Audio: Background Ambience
-    useEffect(() => {
-        if (disableAudio) return; // Skip audio if disabled
-
-        // Load and play the ambient music
-        const soundKey = 'bg-ambience';
-        const sfxPath = '/audio/ambient-music.m4a';
-
-        AudioManager.load(soundKey, sfxPath, {
-            loop: true,
-            volume: 0.30 // 15% volume as requested
-        });
-
-        const id = AudioManager.play(soundKey, 'music', {
-            loop: true,
-            volume: 0.30
-        });
-
-        // Cleanup on unmount
-        return () => {
-            if (id) AudioManager.stop(soundKey, id);
-        };
-    }, [disableAudio]);
 
     // Generate pillar configuration
+
     const pillarConfig = useMemo(() => generatePillars(radius), [radius]);
 
     // Generate spotlight positions in a circle
@@ -123,6 +102,7 @@ export function BandRoom({
     const toSpot = useRef(new Vector3());
     const spotFrameCount = useRef(0);
     const spotShadowFrameCount = useRef(0);
+    const [isArenaVisible, setIsArenaVisible] = useState(true);
 
     // Animate spotlights with view-based culling
     useFrame((state) => {
@@ -142,6 +122,12 @@ export function BandRoom({
         const arenaThresholdSq = radius * radius;
         const isInArenaInner = distFromCenterSq < (radius - 25) * (radius - 25);
         const isInArenaOuter = distFromCenterSq < (radius + 150) * (radius + 150);
+
+        // Cull entire arena when player is deep in Outer Backstage ring (> 420 from origin)
+        const shouldBeVisible = distFromCenterSq < 420 * 420;
+        if (shouldBeVisible !== isArenaVisible) {
+            setIsArenaVisible(shouldBeVisible);
+        }
 
         // Get camera direction for view-based culling
         state.camera.getWorldDirection(cameraDir.current);
@@ -194,40 +180,44 @@ export function BandRoom({
     return (
         <PillarContext.Provider value={pillarConfig}>
             <group>
-                {/* Ambient lighting for base illumination - very subtle for mood */}
-                <ambientLight intensity={0.4} color="#ecb987" />
+                {/* Arena interior — culled when player is in Outer Backstage */}
+                {isArenaVisible && (
+                    <group>
+                        {/* Ambient lighting for base illumination - very subtle for mood */}
+                        <ambientLight intensity={0.4} color="#ecb987" />
 
-                {/* Main warm overhead light - constrained distance and intensity */}
-                {/* We'll use a local component for this to handle its own visibility culling */}
-                <ArenaMainLight radius={radius} wallHeight={wallHeight} />
+                        {/* Main warm overhead light - constrained distance and intensity */}
+                        <ArenaMainLight radius={radius} wallHeight={wallHeight} />
 
-                {/* Floor - Polished Hardwood */}
-                <HardwoodFloor radius={radius} />
+                        {/* Floor - Polished Hardwood */}
+                        <HardwoodFloor radius={radius} />
 
-                {/* Walls - Bronze Cylindrical */}
-                <BronzeWalls radius={radius} height={wallHeight} />
+                        {/* Walls - Bronze Cylindrical */}
+                        <BronzeWalls radius={radius} height={wallHeight} />
 
-                {/* Pillars */}
-                <InstancedPillars pillars={pillarConfig.pillars} />
+                        {/* Pillars */}
+                        <InstancedPillars pillars={pillarConfig.pillars} />
 
-                {/* Ceiling - Domed with structural elements */}
-                <DomeCeiling radius={radius} height={wallHeight} />
+                        {/* Ceiling - Domed with structural elements */}
+                        <DomeCeiling radius={radius} height={wallHeight} />
 
-                {/* Spotlights - only 2 cast shadows to stay within GPU texture limits */}
-                {spotlightPositions.map((position, i) => (
-                    <SpotlightComponent
-                        key={i}
-                        position={position}
-                        target={[position[0] * 0.3, 0, position[2] * 0.3]}
-                        castShadow={quality !== 'low' && (i === 0 || i === 4)} // Only 2 spotlights cast shadows
-                        ref={(el: ThreeSpotLight | null) => {
-                            if (el) spotlightRefs.current[i] = el;
-                        }}
-                    />
-                ))}
+                        {/* Spotlights - only 2 cast shadows to stay within GPU texture limits */}
+                        {spotlightPositions.map((position, i) => (
+                            <SpotlightComponent
+                                key={i}
+                                position={position}
+                                target={[position[0] * 0.3, 0, position[2] * 0.3]}
+                                castShadow={quality !== 'low' && (i === 0 || i === 4)}
+                                ref={(el: ThreeSpotLight | null) => {
+                                    if (el) spotlightRefs.current[i] = el;
+                                }}
+                            />
+                        ))}
 
-                {/* Center stage marker */}
-                <CenterStage />
+                        {/* Center stage marker */}
+                        <CenterStage />
+                    </group>
+                )}
 
                 {/* Branching paths - 4 corridors extending from the arena */}
                 <BranchingPaths arenaRadius={radius} wallHeight={wallHeight} />
@@ -776,17 +766,11 @@ const Corridor = memo(function Corridor({
                 ) : name === 'north' ? (
                     null /* Open — leads to AltarRoom */
                 ) : (
-                    <group position={[0, 0, corridorLength / 2]}>
-                        {/* Main stone wall base */}
-                        <mesh position={[0, corridorHeight / 2, 0]}>
-                            <boxGeometry args={[corridorWidth, corridorHeight, 2]} />
-                            <primitive object={CORRIDOR_STONE_MATERIAL} attach="material" />
-                        </mesh>
-                        {/* Stone wall arch cap to fill ceiling gap */}
-                        <mesh position={[0, corridorHeight, 0]} rotation={[Math.PI / 2, 0, 0]}>
-                            <cylinderGeometry args={[corridorWidth / 2, corridorWidth / 2, 2, 32, 1, false, Math.PI / 2, Math.PI]} />
-                            <primitive object={CORRIDOR_STONE_DS_MATERIAL} attach="material" />
-                        </mesh>
+                    <group position={[0, 0, corridorLength / 2 - 5]}>
+                        <OuterBackstageDoor
+                            position={[0, 0, 0]}
+                            rotation={Math.PI}
+                        />
                     </group>
                 )
             }
@@ -866,8 +850,8 @@ const CorridorLights = memo(function CorridorLights({
     corridorHeight: number,
     arenaRadius: number
 }) {
-    const groupRef = useRef<Group>(null);
     const frameCount = useRef(0);
+    const [isVisible, setIsVisible] = useState(false);
 
     // Pre-compute constant values (don't recalculate every frame)
     const corridorData = useMemo(() => ({
@@ -878,8 +862,6 @@ const CorridorLights = memo(function CorridorLights({
     }), [corridorAngle, arenaRadius]);
 
     useFrame(() => {
-        if (!groupRef.current) return;
-
         // Throttle visibility check to every 15 frames (corridors are far enough that
         // slightly delayed culling is imperceptible)
         frameCount.current++;
@@ -898,11 +880,17 @@ const CorridorLights = memo(function CorridorLights({
         const isNorth = Math.abs(corridorData.dirZ - 1) < 0.01;
         const exitBuffer = isNorth ? corridorLength : corridorLength + 50;
 
-        groupRef.current.visible = distanceAlongCorridor > -100 && distanceAlongCorridor < exitBuffer;
+        const shouldBeVisible = distanceAlongCorridor > -100 && distanceAlongCorridor < exitBuffer;
+        if (shouldBeVisible !== isVisible) {
+            setIsVisible(shouldBeVisible);
+        }
     });
 
+    // Unmount lights entirely when beyond culling bounds
+    if (!isVisible) return null;
+
     return (
-        <group ref={groupRef}>
+        <group>
             {/* Main corridor illumination - dimmed for atmosphere and performance */}
             <pointLight
                 position={[0, corridorHeight - 2, -corridorLength / 4]}

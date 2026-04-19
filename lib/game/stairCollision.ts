@@ -78,7 +78,23 @@ const obstacleRegistry: Map<string, Obstacle[]> = new Map();
 const spatialSurfaces: Map<string, WalkableSurface[]> = new Map();
 const spatialObstacles: Map<string, Obstacle[]> = new Map();
 
+let rebuildTimeout: NodeJS.Timeout | null = null;
+
+/**
+ * Schedule a spatial cache rebuild to happen after a short delay.
+ * This batches multiple register/unregister calls that happen in the same frame
+ * or in quick succession (like during room transitions).
+ */
+export function scheduleRebuild() {
+    if (rebuildTimeout) return;
+    rebuildTimeout = setTimeout(() => {
+        rebuildSpatialCaches();
+        rebuildTimeout = null;
+    }, 0);
+}
+
 function rebuildSpatialCaches() {
+    // console.log('[DungeonCollision] Rebuilding spatial caches...');
     spatialSurfaces.clear();
     for (const surfaces of surfaceRegistry.values()) {
         for (let i = 0; i < surfaces.length; i++) {
@@ -99,8 +115,8 @@ function rebuildSpatialCaches() {
     spatialObstacles.clear();
     for (const obstacles of obstacleRegistry.values()) {
         for (let i = 0; i < obstacles.length; i++) {
-            const obs = obstacles[i];
-            const keys = getOverlappingGridKeys(obs.minX, obs.maxX, obs.minZ, obs.maxZ);
+            const obstacle = obstacles[i];
+            const keys = getOverlappingGridKeys(obstacle.minX, obstacle.maxX, obstacle.minZ, obstacle.maxZ);
             for (let j = 0; j < keys.length; j++) {
                 const key = keys[j];
                 let cell = spatialObstacles.get(key);
@@ -108,7 +124,7 @@ function rebuildSpatialCaches() {
                     cell = [];
                     spatialObstacles.set(key, cell);
                 }
-                cell.push(obs);
+                cell.push(obstacle);
             }
         }
     }
@@ -121,7 +137,7 @@ function rebuildSpatialCaches() {
  */
 export function registerSurfaces(groupId: string, surfaces: WalkableSurface[]): void {
     surfaceRegistry.set(groupId, surfaces);
-    rebuildSpatialCaches();
+    scheduleRebuild();
 }
 
 /**
@@ -130,7 +146,7 @@ export function registerSurfaces(groupId: string, surfaces: WalkableSurface[]): 
  */
 export function unregisterSurfaces(groupId: string): void {
     surfaceRegistry.delete(groupId);
-    rebuildSpatialCaches();
+    scheduleRebuild();
 }
 
 /**
@@ -140,7 +156,7 @@ export function unregisterSurfaces(groupId: string): void {
  */
 export function registerObstacles(groupId: string, obstacles: Obstacle[]): void {
     obstacleRegistry.set(groupId, obstacles);
-    rebuildSpatialCaches();
+    scheduleRebuild();
 }
 
 /**
@@ -149,7 +165,7 @@ export function registerObstacles(groupId: string, obstacles: Obstacle[]): void 
  */
 export function unregisterObstacles(groupId: string): void {
     obstacleRegistry.delete(groupId);
-    rebuildSpatialCaches();
+    scheduleRebuild();
 }
 
 /**

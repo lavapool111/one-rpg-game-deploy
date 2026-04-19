@@ -2,8 +2,8 @@
 
 import { Canvas } from '@react-three/fiber';
 import { Stats, Stars } from '@react-three/drei';
-import { Suspense, useEffect, useRef, useMemo } from 'react';
-import { FirstPersonController, Player, useFirstPersonController } from '@/components/game/everything';
+import { Suspense, useEffect, useRef } from 'react';
+import { FirstPersonController, Player, useFirstPersonController, TouchControls } from '@/components/game/everything';
 import { GameUI } from '@/components/ui';
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
 import { useAudioSettings } from '@/hooks/useAudioSettings';
@@ -27,21 +27,6 @@ export default function AltarRoomDemo() {
 
     const currentAltarIndex = useGameStore(state => state.currentAltarIndex);
     const playerPos = usePlayerStore(state => state.position);
-    const playerZ = playerPos[2];
-
-    const playerAltarIndex = useMemo(() => {
-        let bestIdx = 0;
-        let minDist = Infinity;
-        for (let i = 0; i < 100; i++) {
-            const cz = getAltarCenterZ(i);
-            const dist = Math.abs(playerZ - cz);
-            if (dist < minDist) {
-                minDist = dist;
-                bestIdx = i;
-            }
-        }
-        return bestIdx;
-    }, [playerZ]);
 
     // Sync audio settings
     useAudioSettings();
@@ -62,9 +47,25 @@ export default function AltarRoomDemo() {
         detectDevice();
     }, [detectDevice]);
 
+    const setSimulationActive = useGameStore(state => state.setSimulationActive);
+    const simulationActive = useGameStore(state => state.simulationActive);
+
     useEffect(() => {
         setGameState('playing');
     }, [setGameState]);
+
+    // Staggered simulation activation (matches main page logic)
+    useEffect(() => {
+        if (gameState === 'playing') {
+            let frameIdx = 0;
+            const stagger = () => { frameIdx++; if (frameIdx < 3) requestAnimationFrame(stagger); else setSimulationActive(true); };
+            requestAnimationFrame(stagger);
+        } else {
+            let frameIdx = 0;
+            const stagger = () => { frameIdx++; if (frameIdx < 2) requestAnimationFrame(stagger); else setSimulationActive(false); };
+            requestAnimationFrame(stagger);
+        }
+    }, [gameState, setSimulationActive]);
 
     const setAltarIndex = useGameStore(state => state.setAltarIndex);
 
@@ -117,6 +118,11 @@ export default function AltarRoomDemo() {
 
             <GameUI />
 
+            {/* Mobile Touch Controls */}
+            {gameState === 'playing' && isMobile && (
+                <TouchControls />
+            )}
+
             {gameState === 'playing' && !isLocked && !isMobile && (
                 <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-40">
                     <div className="bg-black/40 backdrop-blur-sm px-6 py-3 rounded-full border border-white/20 text-white/80 animate-pulse font-medium">
@@ -148,7 +154,7 @@ export default function AltarRoomDemo() {
                         eyeLevel={1.5}
                         arenaRadius={5000}
                         collisionMargin={1}
-                        enabled={gameState === 'playing' && !isMobile}
+                        enabled={simulationActive && !isMobile}
                         pillars={[]}
                         pillarCollisionPadding={0}
                         sensitivity={mouseSensitivity}
@@ -169,8 +175,7 @@ export default function AltarRoomDemo() {
                 ALTAR ROOM DEMO MODE<br />
                 Config: ALTAR_ROOM_CONFIG<br />
                 Position: {playerPos.map(c => c.toFixed(1)).join(', ')}<br />
-                Current Ritual Altar: {currentAltarIndex + 1}<br />
-                Player Physical Altar: {playerAltarIndex + 1}
+                Current Ritual Altar: {currentAltarIndex + 1}
             </div>
         </div>
     );

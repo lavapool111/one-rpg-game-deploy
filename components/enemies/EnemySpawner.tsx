@@ -8,7 +8,7 @@ import { Trombone } from './Trombone';
 import { Tuba } from './Tuba';
 import { FrenchHorn } from './FrenchHorn';
 import { Euphonium } from './Euphonium';
-import { usePlayerStore } from '@/lib/store';
+import { usePlayerStore, useGameStore } from '@/lib/store';
 import AudioManager from '@/lib/audio/AudioManager';
 import { Pillar } from '@/lib/game/pillars';
 
@@ -100,13 +100,20 @@ function calculateZoneLevel(zoneType: ZoneType, playerLevel: number): number {
 }
 
 // Generate random position and level based on specific zone
-function getZoneSpawn(zoneType: ZoneType, arenaRadius: number, playerLevel: number, pillars: Pillar[], playerPosition?: [number, number, number]): { position: [number, number, number], level: number, type: EnemyType } | null {
+function getZoneSpawn(zoneType: ZoneType, arenaRadius: number, playerLevel: number, pillars: Pillar[], playerPosition?: [number, number, number], biasAngle?: number): { position: [number, number, number], level: number, type: EnemyType } | null {
     const MAX_RETRIES = 20;
     const MIN_PLAYER_DISTANCE = 30; // Don't spawn within 30ft of player
 
     for (let i = 0; i < MAX_RETRIES; i++) {
-        // Random angle
-        const angle = Math.random() * Math.PI * 2;
+        // Quadrant Bias Logic: If biasAngle is provided, constrain spawn to a ±45 degree slice
+        let angle;
+        if (biasAngle !== undefined) {
+            // Variance of ±PI/4 (45 degrees) for a 90 degree "quadrant" slice
+            const variance = (Math.random() * Math.PI * 0.5) - (Math.PI * 0.25);
+            angle = biasAngle + variance;
+        } else {
+            angle = Math.random() * Math.PI * 2;
+        }
 
         const zone = SPAWN_ZONES[zoneType];
 
@@ -222,15 +229,22 @@ export function EnemySpawner({
     const { camera } = useThree();
     // Use selective subscription to only re-render on level changes
     const currentLevel = usePlayerStore((state) => state.level);
+    const currentLevelRef = useRef(currentLevel);
+    currentLevelRef.current = currentLevel;
     const lastFanfareTime = useRef<number>(0);
     const zoneWaveCounts = useRef<Record<string, number>>({});
 
     // Player position tracking for distance-based culling
     const playerPosRef = useRef(new Vector3());
-    const SPAWN_CULL_DISTANCE = 400; // Only spawn/render enemies within 400ft
+    const SPAWN_CULL_DISTANCE = 1000; // Only spawn/render enemies within 1000ft
 
-    // Track player position each frame
     useFrame(() => {
+        if (!useGameStore.getState().simulationActive) return;
+        const isInAltarRoom = useGameStore.getState().isInAltarRoom;
+        if (isInAltarRoom && enemies.length > 0) {
+            setEnemies([]);
+            return;
+        }
         camera.getWorldPosition(playerPosRef.current);
     });
 
@@ -238,6 +252,7 @@ export function EnemySpawner({
     useEffect(() => {
         if (!enabled) return;
         const interval = setInterval(() => {
+            if (useGameStore.getState().isInAltarRoom) return;
             setEnemies(prev => {
                 const playerX = playerPosRef.current.x;
                 const playerZ = playerPosRef.current.z;
@@ -261,13 +276,14 @@ export function EnemySpawner({
         AudioManager.load(TRUMPET_FANFARE_KEY, TRUMPET_FANFARE_SRC);
     }, []);
 
-    // Generic spawn function for a specific zone
-    const spawnZoneWave = useCallback((zone: ZoneType) => {
+    const spawnZoneWave = useCallback((zone: ZoneType, forceBias: boolean = false) => {
+        if (useGameStore.getState().isInAltarRoom) return;
+
+        // Perform spawn logic inside setEnemies to have access to the most recent state
+        // and to avoid dependency churn on intervals
         setEnemies(prev => {
-            // Check total enemy cap
             if (prev.length >= MAX_TOTAL_ENEMIES) return prev;
 
-            // Count enemies roughly in this zone (based on spawn position distance)
             const zoneConfig = SPAWN_ZONES[zone];
             const zoneEnemyCount = prev.filter(e => {
                 const dist = Math.sqrt(e.position[0] ** 2 + e.position[2] ** 2);
@@ -275,19 +291,11 @@ export function EnemySpawner({
                 return pct >= zoneConfig.minRadius && pct <= zoneConfig.maxRadius;
             }).length;
 
-            // Check zone cap
             if (zoneEnemyCount >= MAX_ENEMIES_PER_ZONE[zone]) return prev;
 
-            // Increment wave count for this zone
             zoneWaveCounts.current[zone] = (zoneWaveCounts.current[zone] || 0) + 1;
-            const waveBonus = Math.max(0, zoneWaveCounts.current[zone] - 1);
-
-            // Calculate how many we can spawn (Base + WaveBonus)
+            const waveBonus = Math.min(5, Math.max(0, zoneWaveCounts.current[zone] - 1));
             const baseSpawn = Math.floor(Math.random() * enemiesPerWave) + 1;
-
-            // Request: "on average 1 more enemy per wave".
-            // Wave 1: Base (e.g. 1-2) + 0 -> Avg 1.5
-            // Wave 2: Base (e.g. 1-2) + 1 -> Avg 2.5
 
             const maxToSpawn = Math.min(
                 MAX_ENEMIES_PER_ZONE[zone] - zoneEnemyCount,
@@ -297,13 +305,21 @@ export function EnemySpawner({
 
             if (maxToSpawn <= 0) return prev;
 
-            const newEnemies: Enemy[] = [];
+            // Calculate bias angle if requested
+            let biasAngle: number | undefined;
+            if (forceBias) {
+                const playerX = playerPosRef.current.x;
+                const playerZ = playerPosRef.current.z;
+                biasAngle = Math.atan2(playerZ, playerX);
+            }
+
+            const newEnemiesBatch: Enemy[] = [];
             for (let i = 0; i < maxToSpawn; i++) {
-                const spawn = getZoneSpawn(zone, arenaRadius, currentLevel, pillars);
+                const spawn = getZoneSpawn(zone, arenaRadius, currentLevelRef.current, pillars, [playerPosRef.current.x, playerPosRef.current.y, playerPosRef.current.z], biasAngle);
                 const isValid = spawn && !spawn.position.some(coord => isNaN(coord));
 
                 if (isValid && spawn) {
-                    newEnemies.push({
+                    newEnemiesBatch.push({
                         id: generateEnemyId(),
                         type: spawn.type,
                         position: spawn.position,
@@ -312,22 +328,34 @@ export function EnemySpawner({
                 }
             }
 
-            if (newEnemies.length > 0) {
-                // Throttle fanfares to 10 seconds (down from 45s) so it plays nearly every wave
+            if (newEnemiesBatch.length > 0) {
                 const now = Date.now();
                 if (now - lastFanfareTime.current > 30000) {
                     AudioManager.play(TRUMPET_FANFARE_KEY, 'sfx', { volume: 0.5 });
                     lastFanfareTime.current = now;
                 }
-                return [...prev, ...newEnemies];
+                return [...prev, ...newEnemiesBatch];
             }
+
             return prev;
         });
-    }, [arenaRadius, enemiesPerWave, currentLevel, pillars]);
+    }, [arenaRadius, enemiesPerWave, pillars]);
+
+
 
     // Handle enemy death
     const handleEnemyDeath = useCallback((id: string) => {
-        setEnemies(prev => prev.filter(enemy => enemy.id !== id));
+        // Defer removal from the React tree by a few frames
+        // The enemy component already returns null immediately when isAlive is false,
+        // so it's vertically out of the scene. Deferring the actual unmounting
+        // prevents aggregate CPU spikes when combined with store updates.
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    setEnemies(prev => prev.filter(enemy => enemy.id !== id));
+                });
+            });
+        });
     }, []);
 
     // Initial spawn on mount (One for each zone, staggered)
@@ -378,6 +406,42 @@ export function EnemySpawner({
         return () => clearInterval(interval);
     }, [enabled, spawnInterval, spawnZoneWave]);
 
+    // Independent Loop: HIGH LEVEL CATALYST (Level 30+)
+    // Accelerates Band Room population if it's sparse and player is high level
+    useEffect(() => {
+        if (!enabled || currentLevel < 30) return;
+
+        const interval = setInterval(() => {
+            if (useGameStore.getState().isInAltarRoom) return;
+
+            // Trigger a wave in the player's current zone area if overall count is low
+            const playerDist = playerPosRef.current.length();
+            const playerPct = playerDist / arenaRadius;
+
+            // Determine current zone based on radius
+            let currentZone: ZoneType = 'mid'; // Default
+            if (playerPct < SPAWN_ZONES.inner.maxRadius) currentZone = 'inner';
+            else if (playerPct < SPAWN_ZONES.mid.maxRadius) currentZone = 'mid';
+            else if (playerPct < SPAWN_ZONES.outer.maxRadius) currentZone = 'outer';
+            else currentZone = 'extreme';
+
+            // We use a functional check inside a mini-spawner to see if we should trigger
+            setEnemies(prev => {
+                if (prev.length < 30) {
+                    // Trigger an immediate proximity-biased spawn wave
+                    // We call it outside or just handle it here.
+                    // Since we're inside setEnemies, we can just return the new batch directly!
+                    // But spawnZoneWave is already optimized.
+                    // To avoid double-nesting, let's just trigger it via a timeout or flag.
+                    setTimeout(() => spawnZoneWave(currentZone, true), 10);
+                }
+                return prev;
+            });
+        }, 12000); // Check every 12s
+
+        return () => clearInterval(interval);
+    }, [enabled, currentLevel, arenaRadius, spawnZoneWave]);
+
     // Independent Loop: TUBA (Back Layer / Outer)
     // Max 3 Tubas. Spawns "multiple of 15 above player".
     useEffect(() => {
@@ -385,11 +449,12 @@ export function EnemySpawner({
 
         // Check every 5 seconds if we need more Tubas (original rate)
         const interval = setInterval(() => {
+            if (useGameStore.getState().isInAltarRoom) return;
             setEnemies(prev => {
                 // Level logic: Multiple of 15 *above* player
                 // If 1-14 -> 15. If 15 -> 30.
                 // Formula: (floor(level / 15) + 1) * 15
-                const tubaLevel = (Math.floor(currentLevel / 15) + 1) * 15;
+                const tubaLevel = (Math.floor(currentLevelRef.current / 15) + 1) * 15;
 
                 // Only count above-level tubas against this cap (not lower-level tubas)
                 const aboveLevelTubas = prev.filter(e => e.type === 'tuba' && e.level >= tubaLevel);
@@ -443,19 +508,20 @@ export function EnemySpawner({
         }, 5000); // Check every 5s
 
         return () => clearInterval(interval);
-    }, [enabled, currentLevel, arenaRadius, pillars]);
+    }, [enabled, arenaRadius, pillars]);
 
     // Independent Loop: LOWER-LEVEL TUBA (Mid Zone)
     // Only when player is level 30+. Max 5. Levels are multiples of 15 at or below player.
     useEffect(() => {
-        if (!enabled || currentLevel < 30) return;
+        if (!enabled || currentLevelRef.current < 30) return;
 
         // Check every 7 seconds if we need more lower-level Tubas (original rate)
         const interval = setInterval(() => {
+            if (useGameStore.getState().isInAltarRoom) return;
             setEnemies(prev => {
                 // Count lower-level tubas (those spawned in mid zone with level < currentLevel)
                 // We track them by checking if their level is a multiple of 15 AND below the "above player" tuba level
-                const abovePlayerTubaLevel = (Math.floor(currentLevel / 15) + 1) * 15;
+                const abovePlayerTubaLevel = (Math.floor(currentLevelRef.current / 15) + 1) * 15;
                 const lowerLevelTubas = prev.filter(e =>
                     e.type === 'tuba' && e.level < abovePlayerTubaLevel
                 );
@@ -464,7 +530,7 @@ export function EnemySpawner({
 
                 // Pick a random tuba level from available multiples of 15 at or below player
                 // e.g., if player is 36, options are [15, 30]
-                const maxMultiple = Math.floor(currentLevel / 15);
+                const maxMultiple = Math.floor(currentLevelRef.current / 15);
                 if (maxMultiple < 1) return prev; // Safety check
 
                 const selectedMultiple = Math.floor(Math.random() * maxMultiple) + 1; // 1 to maxMultiple
@@ -514,7 +580,7 @@ export function EnemySpawner({
         }, 7000); // Check every 7s
 
         return () => clearInterval(interval);
-    }, [enabled, currentLevel, arenaRadius, pillars]);
+    }, [enabled, arenaRadius, pillars]);
 
     return (
         <group>

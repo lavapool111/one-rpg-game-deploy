@@ -24,9 +24,11 @@ interface DungeonDoorProps {
     rotation?: number;
     /** Callback when door is activated */
     onEnter?: () => void;
+    /** Whether the door is locked / inactive */
+    locked?: boolean;
 }
 
-export function DungeonDoor({ position, rotation = 0, onEnter }: DungeonDoorProps) {
+export function DungeonDoor({ position, rotation = 0, onEnter, locked = false }: DungeonDoorProps) {
     const groupRef = useRef<THREE.Group>(null);
     const meshRef = useRef<THREE.Mesh>(null);
     const [hovered, _setHovered] = useState(false);
@@ -40,6 +42,11 @@ export function DungeonDoor({ position, rotation = 0, onEnter }: DungeonDoorProp
 
     // Check if player is close enough to interact (throttled to every 10 frames)
     useFrame(() => {
+        if (locked) {
+            if (showPrompt) setShowPrompt(false);
+            return;
+        }
+
         doorFrameCount.current++;
         if (doorFrameCount.current % 10 !== 0) return;
         if (!groupRef.current) return;
@@ -56,6 +63,7 @@ export function DungeonDoor({ position, rotation = 0, onEnter }: DungeonDoorProp
 
     const handleClick = (e: { stopPropagation?: () => void }) => {
         if (e.stopPropagation) e.stopPropagation();
+        if (locked) return;
         if (showPrompt) {
             console.log('DungeonDoor activated - entering Backstage Halls');
             enterDungeon();
@@ -95,27 +103,29 @@ export function DungeonDoor({ position, rotation = 0, onEnter }: DungeonDoorProp
             {/* Door handle */}
             <mesh position={[DOOR_WIDTH / 2 - 1.5, DOOR_HEIGHT / 2, DOOR_THICKNESS / 2 + 0.1]}>
                 <sphereGeometry args={[0.4, 8, 8]} />
-                <meshStandardMaterial color="#DAA520" roughness={0.3} metalness={0.8} />
+                <meshStandardMaterial color={locked ? "#666666" : "#DAA520"} roughness={0.3} metalness={0.8} />
             </mesh>
 
             {/* Decorative arch glow (magic effect) */}
             <mesh position={[0, DOOR_HEIGHT / 2, DOOR_THICKNESS / 2 + 0.1]}>
                 <ringGeometry args={[4, 4.5, 32]} />
                 <meshBasicMaterial
-                    color="#6a4fd1"
+                    color={locked ? "#444444" : "#6a4fd1"}
                     transparent
-                    opacity={showPrompt ? 0.6 : 0.2}
+                    opacity={locked ? 0.3 : (showPrompt ? 0.6 : 0.2)}
                 />
             </mesh>
 
             {/* Point light for glow effect */}
-            <pointLight
-                position={[0, DOOR_HEIGHT / 2, DOOR_THICKNESS / 2 + 2]}
-                intensity={showPrompt ? 50 : 15}
-                color="#6a4fd1"
-                distance={25}
-                decay={2}
-            />
+            {!locked && (
+                <pointLight
+                    position={[0, DOOR_HEIGHT / 2, DOOR_THICKNESS / 2 + 2]}
+                    intensity={showPrompt ? 50 : 15}
+                    color="#6a4fd1"
+                    distance={25}
+                    decay={2}
+                />
+            )}
         </group>
     );
 }

@@ -4,6 +4,12 @@ import { useGameStore } from '@/lib/store/gameStore';
 // Y parameter is optional - if not provided, Y-based checks are skipped
 // PERF: Uses early-exit pattern — returns true on first zone match instead of evaluating all zones.
 export const isValidDungeonPosition = (x: number, z: number, buffer = 1.5, y?: number): boolean => {
+    const isInAltarRoom = useGameStore.getState().isInAltarRoom;
+
+    // --- ALTAR ROOM FREEDOM ---
+    // If we are in the Altar Room sequence, allow anything beyond the trigger point (574 - logic margin)
+    // Fine-grained collision is handled by registerSurfaces/registerObstacles in AltarRoom.tsx
+    if (isInAltarRoom && z >= 561) return true;
 
     // --- HUB (most common case — check first) ---
 
@@ -61,8 +67,8 @@ export const isValidDungeonPosition = (x: number, z: number, buffer = 1.5, y?: n
     )) return true;
 
     // 12. Hallway Extension (Y <= -15)
-    // Truncated at 574 to avoid overlap with Altar Room sequence
-    if (x >= -6 + buffer && x <= 6 - buffer && z >= 252 && z <= 574 && (y === undefined || y <= -15)) return true;
+    // Previously truncated at 574, now restored to 675 for the dungeon path
+    if (!isInAltarRoom && x >= -6 + buffer && x <= 6 - buffer && z >= 252 && z <= 675 && (y === undefined || y <= -15)) return true;
 
     // 13. Left Branch Corridor (Y >= 13)
     if (x >= -150 && x <= -15 + 2 && z >= 240 && z <= 251 - buffer && (y === undefined || y >= 13)) return true;
@@ -95,16 +101,19 @@ export const isValidDungeonPosition = (x: number, z: number, buffer = 1.5, y?: n
     if (((x >= -6 && x <= 6 && z >= 370 && z <= 406) || (x >= -14 && x <= 14 && z >= 406 && z <= 429)) && (y === undefined || y <= -15)) return true;
 
     // 9.5 Deep Vault Prison (Y <= -15)
-    // Truncated at 574 to avoid overlap with Altar Room sequence
-    if ((y === undefined || y <= -15) && (
-        (x >= -8 && x <= 8 && z >= 429 && z <= 574) ||
+    // Previously truncated at 574, now restored to 675 for the dungeon path
+    // Contains 8 cells at Z=470, 520, 580, 630 on both Left and Right sides
+    if (!isInAltarRoom && (y === undefined || y <= -15) && (
+        (x >= -8 && x <= 8 && z >= 429 && z <= 675) ||
         (x >= -18 + buffer && x <= 18 - buffer && (
-            (z >= 467 && z <= 474) || (z >= 517 && z <= 524)
+            (z >= 467 && z <= 474) || (z >= 517 && z <= 524) ||
+            (z >= 577 && z <= 584) || (z >= 627 && z <= 634)
         ))
     )) return true;
 
-    // 9.6 Trial Room Stairwell (Y <= -15) - REMOVED: Overlaps with Altar Room sequence
-    // 9.7 Deep Vault Trial Room (Y <= -15) - REMOVED: Overlaps with Altar Room sequence
+    // 9.6 Trial Room Area (Y <= -15)
+    if (!isInAltarRoom && (y === undefined || y <= -15) && x >= -30 + buffer && x <= 30 - buffer && z >= 675 && z <= 785) return true;
+
 
     // 1b. Hub Descent — gated behind 5 trial room kills
     const passageBuf = 0.5;

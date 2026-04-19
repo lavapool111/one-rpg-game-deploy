@@ -7,6 +7,7 @@ import { PauseMenu } from './PauseMenu';
 import { DeathScreen } from './DeathScreen';
 import { IntroScreen } from './IntroScreen';
 import { ClassSelectScreen } from './ClassSelectScreen';
+import { AltarIntroScreen } from './AltarIntroScreen';
 import { PlayerHUD } from './PlayerHUD';
 import { DungeonHUD } from './DungeonHUD';
 import { CombatHUD } from './CombatHUD';
@@ -107,6 +108,57 @@ export function GameUI() {
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [gameState, setGameState, openInventoryOnPause, clearDungeonResult, showStatsScreen]);
 
+    // Stagger HUD unmounting to avoid single-frame CPU spike when dying/pausing
+    const [showHUD, setShowHUD] = useState(true);
+    useEffect(() => {
+        const active = gameState === 'playing' || gameState === 'paused';
+        let cancelled = false;
+        if (active) {
+            setShowHUD(true);
+        } else {
+            // Delay unmounting by 4 frames
+            let frames = 0;
+            const delay = () => {
+                if (cancelled) return; // Effect was cleaned up (gameState changed)
+                frames++;
+                if (frames < 4) {
+                    requestAnimationFrame(delay);
+                } else {
+                    setShowHUD(false);
+                }
+            };
+            requestAnimationFrame(delay);
+        }
+        return () => { cancelled = true; };
+    }, [gameState]);
+
+    // Stagger Screen Mounting (Pause/Death) to avoid overlap with HUD unmounting & engine stop
+    const [delayedGameState, setDelayedGameState] = useState(gameState);
+    useEffect(() => {
+        if (gameState === delayedGameState) return;
+
+        // Reset delay if we are going back to playing or menu (immediate)
+        if (gameState === 'playing' || gameState === 'menu') {
+            setDelayedGameState(gameState);
+            return;
+        }
+
+        // Delay mounting heavy screens (Pause, Game Over) by 3 frames
+        let frames = 0;
+        let cancelled = false;
+        const delayMount = () => {
+            if (cancelled) return;
+            frames++;
+            if (frames < 3) {
+                requestAnimationFrame(delayMount);
+            } else {
+                setDelayedGameState(gameState);
+            }
+        };
+        requestAnimationFrame(delayMount);
+        return () => { cancelled = true; };
+    }, [gameState, delayedGameState]);
+
     const isMobile = useSettingsStore((state) => state.isMobile);
 
     return (
@@ -120,6 +172,9 @@ export function GameUI() {
             {/* Class Select Screen - Choose instrument */}
             {gameState === 'classSelect' && <ClassSelectScreen />}
 
+            {/* Altar Lore Overlay */}
+            <AltarIntroScreen />
+
             {/* Mobile Pause Button - Top Left */}
             {gameState === 'playing' && isMobile && (
                 <button
@@ -131,26 +186,24 @@ export function GameUI() {
             )
             }
 
-            {/* Player HUD & Combat Controls - Visible when playing or paused */}
-            {
-                (gameState === 'playing' || gameState === 'paused') && (
-                    <>
-                        <PlayerHUD />
-                        <DungeonHUD />
-                        <CombatHUD />
-                        <WaveUI />
-                    </>
-                )
-            }
+            {/* Player HUD & Combat Controls - Staggered unmount to avoid CPU spikes */}
+            {showHUD && (
+                <>
+                    <PlayerHUD />
+                    <DungeonHUD />
+                    <CombatHUD />
+                    <WaveUI />
+                </>
+            )}
 
             {/* Stats Screen - Overlay when pressing E */}
             {showStatsScreen && <StatsScreen onClose={() => setShowStatsScreen(false)} />}
 
             {/* Pause Menu - Overlay when paused (but not when stats screen is open) */}
-            {gameState === 'paused' && !showStatsScreen && <PauseMenu defaultOpenInventory={openInventoryOnPause} />}
+            {delayedGameState === 'paused' && !showStatsScreen && <PauseMenu defaultOpenInventory={openInventoryOnPause} />}
 
             {/* Death Screen - Overlay when game over */}
-            {gameState === 'gameOver' && <DeathScreen />}
+            {delayedGameState === 'gameOver' && <DeathScreen />}
 
             {/* Dungeon Summary Screen - Appears after dungeon escape */}
             <DungeonSummaryScreen />

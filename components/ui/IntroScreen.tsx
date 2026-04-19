@@ -6,7 +6,7 @@ import { useState, useEffect } from 'react';
 const LORE_TEXT = [
     "Hello, band kid.",
     "Two long weeks have passed since the band room was sealed. Two brutal weeks since the brass section rose in rebellion. Two merciless weeks since they claimed the Stage—and every shadowed corridor behind it. The air has grown cold, the lights dim, and the echoes of their conquest still rattle the walls.",
-    "Trumpets, trombones, horns, tubas, euphoniums… each section has carved out its domain, guarding the path forward with relentless sound. Yet deeper forces stir—ancient powers buried beneath centuries of collapse and reconstruction, locked away behind vaults and keys once forged by god-like mages, now scattered across the halls like forgotten notes.",
+    "Trumpets, trombones, horns, tubas, euphoniums… each section has carved out its domain, guarding the path forward with relentless sound. Yet deeper forces stir—ancient powers buried beneath centuries of collapse and reconstruction, locked away behind vaults and keys once forged by the 12 Archdukes of Music, now scattered across the halls like forgotten notes.",
     "You have not escaped. You remain trapped within the band room's endless expanse. But the choice is yours: endure the silence, or rise against the brass and reclaim the Stage. The music of freedom waits to be played—if you can survive the symphony of war."
 ];
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import { useGameStore } from '@/lib/store';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 
 /**
  * DungeonHUD Component
@@ -20,6 +21,7 @@ export function DungeonHUD() {
     const [remainingTime, setRemainingTime] = useState<number>(0);
     const [runFailed, setRunFailed] = useState(false);
     const failedRef = useRef(false);
+    const isMobile = useSettingsStore((state) => state.isMobile);
 
     // Update timer countdown
     useEffect(() => {
@@ -96,9 +98,9 @@ export function DungeonHUD() {
     };
 
     return (
-        <div className="absolute top-4 left-4 pointer-events-none z-50 flex flex-col items-start gap-2">
+        <div className={`absolute ${isMobile ? 'top-14' : 'top-4'} left-4 pointer-events-none z-50 flex flex-col items-start gap-2`}>
             {/* Dungeon Stats Panel */}
-            <div className="bg-black/80 backdrop-blur-md rounded-xl p-4 min-w-[200px] border border-amber-500/30 shadow-xl">
+            <div className={`bg-black/80 backdrop-blur-md rounded-xl p-4 ${isMobile ? 'min-w-[160px]' : 'min-w-[200px]'} border border-amber-500/30 shadow-xl`}>
                 {/* Header */}
                 <div className="flex items-center justify-between mb-3">
                     <span className="text-amber-400 font-bold text-sm uppercase tracking-wide">

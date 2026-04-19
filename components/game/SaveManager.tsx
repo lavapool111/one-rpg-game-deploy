@@ -4,7 +4,7 @@ import { useEffect, useRef } from 'react';
 import { usePlayerStore, useGameStore } from '@/lib/store';
 import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { useInventoryStore } from '@/lib/store/inventoryStore';
-import { saveGame } from '@/lib/db';
+import { saveGame, loadGame, deleteLatestSave } from '@/lib/db';
 
 /**
  * Unified save data getter to ensure consistent saves across the game.
@@ -43,6 +43,8 @@ export const getSaveData = () => {
         playerName: player.playerName,
         abilityUpgrades: player.abilityUpgrades,
         currentAltarIndex: game.currentAltarIndex,
+        outerBackstageUnlocked: game.outerBackstageUnlocked,
+        hasSeenAltarIntro: game.hasSeenAltarIntro,
         sessionId: player.sessionId,
         position: {
             x: player.position[0],
@@ -58,9 +60,11 @@ export const SaveManager = () => {
     const lastPlayerVersion = useRef(0);
     const lastInventoryVersion = useRef(0);
     const lastAccessoryVersion = useRef(0);
+    const lastGameVersion = useRef(0);
+    const lastPosition = useRef([0, 1.5, 0]);
     const saveTimeout = useRef<NodeJS.Timeout | null>(null);
 
-    const SAVE_COOLDOWN_MS = 2000; // Auto-save at most every 2 seconds
+    const SAVE_COOLDOWN_MS = 1000; // Auto-save at most every 1 second
     const DEBOUNCE_DELAY_MS = 500; // Minimum wait after a state change
     const isSavePending = useRef(false);
 
@@ -82,25 +86,37 @@ export const SaveManager = () => {
             saveTimeout.current = setTimeout(() => {
                 isSavePending.current = false;
 
-                const { gameState } = useGameStore.getState();
-                const { isLoading, version: playerVersion } = usePlayerStore.getState();
+                const gameStore = useGameStore.getState();
+                const gameVersion = gameStore.version;
+                const gameState = gameStore.gameState;
+
+                const { version: playerVersion, isLoading } = usePlayerStore.getState();
                 const { version: inventoryVersion } = useInventoryStore.getState();
                 const { version: accessoryVersion } = useAccessoryStore.getState();
 
                 if (gameState !== 'playing' && gameState !== 'paused') return;
                 if (isLoading) return;
 
-                // Fast dirty check using version numbers
+                const pos = usePlayerStore.getState().position;
+                const isPosDirty =
+                    Math.abs(pos[0] - lastPosition.current[0]) > 1 ||
+                    Math.abs(pos[2] - lastPosition.current[2]) > 1;
+
+                // Fast dirty check using version numbers and position
                 const isDirty =
                     playerVersion !== lastPlayerVersion.current ||
                     inventoryVersion !== lastInventoryVersion.current ||
-                    accessoryVersion !== lastAccessoryVersion.current;
+                    accessoryVersion !== lastAccessoryVersion.current ||
+                    gameVersion !== lastGameVersion.current ||
+                    isPosDirty;
 
                 if (isDirty) {
                     lastSaveTime.current = Date.now();
                     lastPlayerVersion.current = playerVersion;
                     lastInventoryVersion.current = inventoryVersion;
                     lastAccessoryVersion.current = accessoryVersion;
+                    lastGameVersion.current = gameVersion;
+                    lastPosition.current = [...usePlayerStore.getState().position];
 
                     const saveData = getSaveData();
                     console.log('[SaveManager] State is dirty (versioned), saving...', {
@@ -111,9 +127,48 @@ export const SaveManager = () => {
             }, delay);
         };
 
+        const handleRollback = async () => {
+            console.log('[SaveManager] Rollback requested...');
+            const success = await deleteLatestSave();
+            if (success) {
+                const previousSave = await loadGame();
+                if (previousSave) {
+                    console.log('[SaveManager] Rolling back to save:', previousSave.timestamp);
+
+                    // Update all stores
+                    usePlayerStore.getState().loadState(previousSave);
+                    useInventoryStore.getState().loadState(previousSave);
+                    useAccessoryStore.getState().loadState(previousSave);
+                    useGameStore.getState().loadState(previousSave);
+
+                    // Update local refs to prevent immediate re-save
+                    lastPlayerVersion.current = usePlayerStore.getState().version;
+                    lastInventoryVersion.current = useInventoryStore.getState().version;
+                    lastAccessoryVersion.current = useAccessoryStore.getState().version;
+                    lastGameVersion.current = useGameStore.getState().version;
+                    lastPosition.current = [...usePlayerStore.getState().position];
+
+                    // Feedback (optional, could be an overlay)
+                    alert('Reverted to previous save version.');
+                } else {
+                    alert('No previous save found to revert to.');
+                }
+            } else {
+                alert('No save to rollback.');
+            }
+        };
+
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() === 'm') {
+                // Check if not in an input field
+                if (document.activeElement?.tagName === 'INPUT' || document.activeElement?.tagName === 'TEXTAREA') return;
+                handleRollback();
+            }
+        };
+
         // Immediate save for critical moments (tab close, visibility change)
         const handleEmergencySave = () => {
-            const { gameState } = useGameStore.getState();
+            const { version: gameVersion, gameState } = useGameStore.getState();
             const { isLoading, version: playerVersion } = usePlayerStore.getState();
             const { version: inventoryVersion } = useInventoryStore.getState();
             const { version: accessoryVersion } = useAccessoryStore.getState();
@@ -121,16 +176,25 @@ export const SaveManager = () => {
             if (gameState !== 'playing' && gameState !== 'paused') return;
             if (isLoading) return;
 
+            const pos = usePlayerStore.getState().position;
+            const isPosDirty =
+                Math.abs(pos[0] - lastPosition.current[0]) > 1 ||
+                Math.abs(pos[2] - lastPosition.current[2]) > 1;
+
             // Emergency dirty check
             const isDirty =
                 playerVersion !== lastPlayerVersion.current ||
                 inventoryVersion !== lastInventoryVersion.current ||
-                accessoryVersion !== lastAccessoryVersion.current;
+                accessoryVersion !== lastAccessoryVersion.current ||
+                gameVersion !== lastGameVersion.current ||
+                isPosDirty;
 
             if (isDirty) {
                 lastPlayerVersion.current = playerVersion;
                 lastInventoryVersion.current = inventoryVersion;
                 lastAccessoryVersion.current = accessoryVersion;
+                lastGameVersion.current = gameVersion;
+                lastPosition.current = [...usePlayerStore.getState().position];
 
                 const saveData = getSaveData();
                 saveGame(saveData);
@@ -159,28 +223,20 @@ export const SaveManager = () => {
 
         // Subscribe to relevant changes - consolidated where possible
         const unsubs = [
-            usePlayerStore.subscribe(state => state.xp, triggerSaveCheck),
-            usePlayerStore.subscribe(state => state.level, triggerSaveCheck),
-            usePlayerStore.subscribe(state => state.echoes, triggerSaveCheck),
-            useInventoryStore.subscribe(state => state.inventory, triggerSaveCheck),
-            usePlayerStore.subscribe(state => state.embouchure, triggerSaveCheck),
-            useAccessoryStore.subscribe(state => state.equippedReed, triggerSaveCheck),
-            useAccessoryStore.subscribe(state => state.equippedLigature, triggerSaveCheck),
-            useAccessoryStore.subscribe(state => state.equippedMouthpiece, triggerSaveCheck),
-            useAccessoryStore.subscribe(state => state.equippedCase, triggerSaveCheck),
-            useAccessoryStore.subscribe(state => state.equippedEnchantments, triggerSaveCheck),
-            usePlayerStore.subscribe(state => state.playerName, triggerSaveCheck),
-            usePlayerStore.subscribe(state => state.abilityUpgrades, triggerSaveCheck),
             usePlayerStore.subscribe(state => state.version, triggerSaveCheck),
             useInventoryStore.subscribe(state => state.version, triggerSaveCheck),
-            useAccessoryStore.subscribe(state => state.version, triggerSaveCheck)
+            useAccessoryStore.subscribe(state => state.version, triggerSaveCheck),
+            useGameStore.subscribe(state => state.version, triggerSaveCheck),
         ];
 
         // Occasional auto-save check regardless of subscriptions
-        const autoSaveInterval = setInterval(triggerSaveCheck, 10000);
+        // Using 2100ms to stagger against the 3100ms Registry cleanup
+        const autoSaveInterval = setInterval(triggerSaveCheck, 2100);
+
 
         window.addEventListener('beforeunload', handleBeforeUnload);
         document.addEventListener('visibilitychange', handleVisibilityChange);
+        window.addEventListener('keydown', handleKeyDown);
 
         return () => {
             unsubs.forEach(unsub => unsub());
@@ -188,7 +244,8 @@ export const SaveManager = () => {
             if (saveTimeout.current) clearTimeout(saveTimeout.current);
             window.removeEventListener('beforeunload', handleBeforeUnload);
             document.removeEventListener('visibilitychange', handleVisibilityChange);
-            handleEmergencySave();
+            window.removeEventListener('keydown', handleKeyDown);
+            // handleEmergencySave(); // Removed to prevent blocking exit-lag when UI unmounts/remounts
         };
     }, []);
 

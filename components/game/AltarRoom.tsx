@@ -27,7 +27,7 @@ import { GAME_CONFIG } from '@/lib/game/config';
  * - Atmospheric moody lighting (optimized — minimal point lights)
  * - South entrance opening connecting to the north corridor
  */
-import { InstancedMesh, Object3D, Matrix4 } from 'three';
+import { InstancedMesh, Object3D, Matrix4, Vector3 } from 'three';
 
 // --- Shared Materials (created once, reused) ---
 const STONE_FLOOR_MATERIAL = new MeshStandardMaterial({
@@ -117,11 +117,11 @@ export const ALTAR_ROOM_CENTER_Z = 636.5;
 export const ALTAR_ROOM_RADIUS = ROOM_RADIUS;
 
 // --- Instanced Statues Component ---
-const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, count = 8, isCurrent = false }: { radius: number, scale?: number, count?: number, isCurrent?: boolean }) {
+const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, count = 8, isCurrent = false, isPlayerInRoom = false }: { radius: number, scale?: number, count?: number, isCurrent?: boolean, isPlayerInRoom?: boolean }) {
     const angles = useMemo(() => {
         const result = [];
         for (let i = 0; i < count; i++) {
-            result.push((i / count) * Math.PI * 2);
+            result.push((i / count) * Math.PI * 2 + Math.PI / 8);
         }
         return result;
     }, [count]);
@@ -139,11 +139,13 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
     const rArmRef = useRef<InstancedMesh>(null);
     const staffRef = useRef<InstancedMesh>(null);
     const orbRef = useRef<InstancedMesh>(null);
+    const haloRef = useRef<InstancedMesh>(null);
+    const staffBladeRef = useRef<InstancedMesh>(null);
 
     useEffect(() => {
         const refs = [
             pedestalRef, pedestalTrimRef, bodyBaseRef, bodyMidRef, bodyTorsoRef,
-            shouldersRef, headRef, hoodRef, crownRef, crownSpikesRef, lArmRef, rArmRef, staffRef, orbRef
+            shouldersRef, headRef, hoodRef, crownRef, crownSpikesRef, lArmRef, rArmRef, staffRef, orbRef, haloRef, staffBladeRef
         ];
         if (refs.some(ref => !ref.current)) return;
 
@@ -192,8 +194,8 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
             bodyTorsoRef.current!.setMatrixAt(i, torsoWorld);
 
             // 6. Shoulders
-            // Original shoulder scale was [1.4, 0.5, 0.8]
-            const shLocalScale = new Matrix4().makeScale(1.4, 0.5, 0.8);
+            // Increased pauldron scale for imposing look
+            const shLocalScale = new Matrix4().makeScale(1.8, 0.7, 1.2);
             const shPos = new Matrix4().makeTranslation(0, baseY + 11.5, 0);
             const shWorld = baseMat.clone().multiply(shPos).multiply(shLocalScale);
             shouldersRef.current!.setMatrixAt(i, shWorld);
@@ -218,7 +220,7 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
                 const angleOffset = (j / 5) * Math.PI * 2;
                 const spikePos = new Matrix4().makeTranslation(
                     Math.sin(angleOffset) * 0.8,
-                    baseY + 15.5,
+                    baseY + 15.8, // Raised to match taller spikes
                     Math.cos(angleOffset) * 0.8
                 );
                 const spikeWorld = baseMat.clone().multiply(spikePos);
@@ -248,6 +250,18 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
             const orbPos = new Matrix4().makeTranslation(3.8, baseY + 17, 0.6);
             const orbWorld = baseMat.clone().multiply(orbPos);
             orbRef.current!.setMatrixAt(i, orbWorld);
+
+            // 15. Halo
+            const haloPos = new Matrix4()
+                .makeTranslation(0, baseY + 14, -1.8)
+                .multiply(new Matrix4().makeRotationX(Math.PI / 2));
+            const haloWorld = baseMat.clone().multiply(haloPos);
+            haloRef.current!.setMatrixAt(i, haloWorld);
+
+            // 16. Staff Blade (Halberd)
+            const staffBladeLocal = new Matrix4().makeTranslation(3.8, baseY + 15, 1.4);
+            const staffBladeWorld = baseMat.clone().multiply(staffBladeLocal);
+            staffBladeRef.current!.setMatrixAt(i, staffBladeWorld);
         });
 
         refs.forEach(ref => {
@@ -286,7 +300,7 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
 
             {/* Statue Torso */}
             <instancedMesh ref={bodyTorsoRef} args={[undefined, undefined, angles.length]}>
-                <cylinderGeometry args={[2.8, 2.5, 4, 16]} />
+                <cylinderGeometry args={[3.2, 2.8, 4, 16]} />
                 <primitive object={STATUE_MATERIAL} attach="material" />
             </instancedMesh>
 
@@ -308,7 +322,7 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
                 <primitive object={GOLD_TRIM_MATERIAL} attach="material" />
             </instancedMesh>
             <instancedMesh ref={crownSpikesRef} args={[undefined, undefined, angles.length * 5]}>
-                <coneGeometry args={[0.15, 0.6, 6]} />
+                <coneGeometry args={[0.15, 1.2, 6]} />
                 <primitive object={GOLD_TRIM_MATERIAL} attach="material" />
             </instancedMesh>
             <instancedMesh ref={lArmRef} args={[undefined, undefined, angles.length]}>
@@ -327,21 +341,43 @@ const InstancedStatues = memo(function InstancedStatues({ radius, scale = 1, cou
                 <sphereGeometry args={[0.8, 8, 6]} />
                 <primitive object={STATUE_ACCENT_MATERIAL} attach="material" />
             </instancedMesh>
+            <instancedMesh ref={haloRef} args={[undefined, undefined, angles.length]}>
+                <torusGeometry args={[2.5, 0.2, 16, 32]} />
+                <primitive object={GOLD_TRIM_MATERIAL} attach="material" />
+            </instancedMesh>
+            <instancedMesh ref={staffBladeRef} args={[undefined, undefined, angles.length]}>
+                <boxGeometry args={[0.2, 4, 2]} />
+                <primitive object={STATUE_ACCENT_MATERIAL} attach="material" />
+            </instancedMesh>
 
-            {/* Individual Lights - Colored magical glow per statue - only in current room */}
-            {isCurrent && angles.map((angle, i) => {
+            {/* Individual Lights - Colored magical glow per statue - only in current room and when player is inside */}
+            {isCurrent && isPlayerInRoom && angles.map((angle, i) => {
                 // 6 distinct colors: red, orange, green, cyan, purple, magenta
                 const colors = ['#5b2020', '#5e2f0f', '#895a1a', '#154c31', '#2c716d', '#586e7c', '#434f6c', '#7a2b7a'];
-                const x = Math.sin(angle) * (STATUE_RING_RADIUS - 3);
-                const z = Math.cos(angle) * (STATUE_RING_RADIUS - 3);
+
+                const xCenter = Math.sin(angle) * (radius);
+                const zCenter = Math.cos(angle) * (radius);
+                const rotY = angle + Math.PI;
+
+                const statuePosMat = new Matrix4().makeTranslation(xCenter, 0, zCenter);
+                const statueRotMat = new Matrix4().makeRotationY(rotY);
+                const statueScaleMat = new Matrix4().makeScale(scale, scale, scale);
+                const baseMat = statuePosMat.clone().multiply(statueRotMat).multiply(statueScaleMat);
+
+                // Orb is at local (3.8, 17+5, 0.6). Place light precisely at the orb edge (Z=1.6)
+                // so it originates from its surface, creating a tight localized glow!
+                const lightLocal = new Vector3(3.8, 22, 1.6);
+                lightLocal.applyMatrix4(baseMat);
+
                 return (
                     <pointLight
                         key={i}
-                        position={[x, 15, z]}
-                        intensity={55}
+                        position={[lightLocal.x, lightLocal.y, lightLocal.z]}
+                        intensity={90 * scale} // Hot bright center
                         color={colors[i % colors.length]}
-                        distance={30}
-                        decay={2}
+                        distance={25 * scale} // Tight falloff to look like a distinct source, not a widespread floodlight
+                        decay={2} // Realistic quadratic decay
+                        frustumCulled={false}
                     />
                 );
             })}
@@ -400,7 +436,7 @@ const InstancedPortals = memo(function InstancedPortals({ roomRadius, scale = 1 
 });
 
 // --- Central Altar ---
-const CentralAltar = memo(function CentralAltar({ isCurrent = false, scale = 1, cz = ALTAR_ROOM_CENTER_Z }: { isCurrent?: boolean, scale?: number, cz?: number }) {
+const CentralAltar = memo(function CentralAltar({ isCurrent = false, isPlayerInRoom = false, scale = 1, cz = ALTAR_ROOM_CENTER_Z }: { isCurrent?: boolean, isPlayerInRoom?: boolean, scale?: number, cz?: number }) {
     // Register walkable surfaces for the steps and obstacle for the altar block
     useEffect(() => {
         const idPrefix = `altar-${cz}`;
@@ -499,8 +535,8 @@ const CentralAltar = memo(function CentralAltar({ isCurrent = false, scale = 1, 
                 <primitive object={RUNE_INNER_MATERIAL} attach="material" />
             </mesh>
 
-            {/* Single altar glow light - only in current room */}
-            {isCurrent && (
+            {/* Single altar glow light - only in current room and when player is inside */}
+            {isCurrent && isPlayerInRoom && (
                 <pointLight
                     position={[0, 12 * scale, 0]}
                     intensity={500}
@@ -517,7 +553,9 @@ const CentralAltar = memo(function CentralAltar({ isCurrent = false, scale = 1, 
 export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number }) {
     const groupRef = useRef<Group>(null);
     const frameCount = useRef(0);
-    const [isPlayerIn, setIsPlayerIn] = useState(false);
+    const [isVisible, setIsVisible] = useState(false);
+    const [isPlayerInRoom, setIsPlayerInRoom] = useState(false);
+    const [isPlayerInCorridor, setIsPlayerInCorridor] = useState(false);
 
     const roomRadius = getAltarRadius(index);
     const cz = getAltarCenterZ(index);
@@ -525,10 +563,8 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
     const roomHeight = getAltarHeight(index);
     const scaleFactor = getAltarScaleFactor(index);
 
-    // Visibility culling based on player distance
+    // Visibility unmounting based on player distance
     useFrame(() => {
-        if (!groupRef.current) return;
-
         // Throttle check to every 10 frames
         frameCount.current++;
         if (frameCount.current % 10 !== 0) return;
@@ -543,14 +579,29 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
 
         // Visual radius varies. Use a generous culling radius that covers room + corridors
         const cullRadius = roomRadius + 220;
-        groupRef.current.visible = distSq < cullRadius * cullRadius;
+        const shouldBeVisible = distSq < cullRadius * cullRadius;
 
-        // Aggressive culling: only activate lights if the player is ACTUALLY inside the room bounds.
-        // This prevents the 14 heavy PBR lights from turning on while the player is still in the Band Room corridor.
-        const inZ = pz >= cz - roomRadius && pz <= cz + roomRadius + corridorLen + 10;
-        const inX = Math.abs(px) < roomRadius + 20;
-        const isCurrentlyIn = inZ && inX;
-        if (isCurrentlyIn !== isPlayerIn) setIsPlayerIn(isCurrentlyIn);
+        if (shouldBeVisible !== isVisible) {
+            setIsVisible(shouldBeVisible);
+        }
+
+        // Logic for room/corridor lighting:
+        // Room check: circular
+        const distToCenter = Math.sqrt(dx * dx + dz * dz);
+        const inRoom = distToCenter < roomRadius + 2; // Precise boundary for room
+
+        // Corridor check: rectangular (North Corridor)
+        // dz is Pz - Cz. North corridor is at positive dz.
+        const inCorridorZ = (dz >= roomRadius - 2) && (dz <= roomRadius + corridorLen + 5);
+        const inCorridorX = Math.abs(dx) <= (ENTRANCE_WIDTH / 2) + 2;
+        const inCorridor = inCorridorZ && inCorridorX;
+
+        if (inRoom !== isPlayerInRoom) {
+            setIsPlayerInRoom(inRoom);
+        }
+        if (inCorridor !== isPlayerInCorridor) {
+            setIsPlayerInCorridor(inCorridor);
+        }
     });
 
     // Calculate entrance opening angle for the south entrance
@@ -608,7 +659,18 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
     }, [roomRadius]);
 
     const altarRoomWave = useGameStore(state => state.altarRoomWave);
+    const waveEnemiesRemaining = useGameStore(state => state.altarRoomWaveEnemiesRemaining);
     const currentAltarIndex = useGameStore(state => state.currentAltarIndex);
+
+    // Dynamic Ritual Lighting Phases
+    const isWaveActive = waveEnemiesRemaining > 0;
+    const ritualPhase: 'normal' | 'phase4' | 'phase5' = useMemo(() => {
+        if (altarRoomWave === 3 && !isWaveActive) return 'phase4'; // Buffer 3->4
+        if (altarRoomWave === 4) return isWaveActive ? 'phase4' : 'phase5'; // Wave 4 or Buffer 4->5
+        if (altarRoomWave === 5 && isWaveActive) return 'phase5'; // Wave 5
+        return 'normal';
+    }, [altarRoomWave, isWaveActive]);
+
     const MAX_WAVES = 5;
 
     useEffect(() => {
@@ -667,10 +729,9 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
 
     // Separate effect for the Gate - only needed for the current active room
     useEffect(() => {
-        if (index !== currentAltarIndex) return;
-
         const groupId = `altar-room-gate-${index}`;
-        const isRitualComplete = altarRoomWave > MAX_WAVES;
+        // Only consider ritual complete if this IS the current altar and it's wave 6
+        const isRitualComplete = (index === currentAltarIndex) && (altarRoomWave > MAX_WAVES);
 
         if (!isRitualComplete && !GAME_CONFIG.DISABLE_ALTAR_GATES) {
             registerObstacles(groupId, [{
@@ -681,21 +742,62 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
             }]);
         }
 
+        // 5. Entrance Gate Collision (South)
+        // Only active during ritual for the current altar
+        const altarRitualStarted = useGameStore.getState().altarRitualStarted;
+        const isRitualActive = index === currentAltarIndex && altarRitualStarted && altarRoomWave <= MAX_WAVES;
+        if (isRitualActive && !GAME_CONFIG.DISABLE_ALTAR_GATES) {
+            registerObstacles(`${groupId}-entrance`, [{
+                id: `${groupId}-entrance-gate`,
+                minX: -ENTRANCE_WIDTH / 2, maxX: ENTRANCE_WIDTH / 2,
+                minZ: cz - roomRadius - 1, maxZ: cz - roomRadius, // World Z coordinates
+                minY: 0, maxY: roomHeight
+            }]);
+        }
+
         return () => {
             unregisterObstacles(groupId);
+            unregisterObstacles(`${groupId}-entrance`);
         };
     }, [index, currentAltarIndex, altarRoomWave, cz, roomRadius, corridorLen, roomHeight]);
 
     return (
-        <group ref={groupRef} position={[0, 0, cz]}>
-            {/* Ambient Lighting only in current room to prevent intensity stacking */}
-            {isPlayerIn && (
-                <ambientLight intensity={0.15 * scaleFactor} color="#bbc8dd" />
+        <group ref={groupRef} position={[0, 0, cz]} visible={isVisible}>
+            {/* Base Room Lighting — on when in room OR in the corridor */}
+            {(isPlayerInRoom || isPlayerInCorridor) && (
+                <group>
+                    <ambientLight intensity={0.15 * scaleFactor} color="#bbc8dd" />
+
+                    {/* Main room light — stays on in corridor, but dims/colors based on wave */}
+                    <pointLight
+                        position={[0, roomHeight * 0.75, 0]}
+                        intensity={ritualPhase === 'normal' ? 90 * scaleFactor : (ritualPhase === 'phase4' ? 40 * scaleFactor : 60 * scaleFactor)}
+                        distance={200 * scaleFactor}
+                        decay={1}
+                        color={ritualPhase === 'phase5' ? '#ff4444' : '#baddff'}
+                    />
+                </group>
             )}
 
-            {/* Main room light - disabled if not current to reduce GPU pressure and prevent bleed */}
-            {isPlayerIn && (
-                <pointLight position={[0, roomHeight * 0.75, 0]} intensity={90 * scaleFactor} distance={200 * scaleFactor} decay={1} color="#baddff" />
+            {/* Room-Specific Decorative Lighting — only when purely inside the room */}
+            {isPlayerInRoom && (
+                <group>
+                    {/* Entrance portal lights (South) */}
+                    <pointLight position={[-ENTRANCE_WIDTH / 2, 12 * scaleFactor, -roomRadius + 2]} intensity={15} color="#ffcc88" distance={15 * scaleFactor} decay={2} />
+                    <pointLight position={[ENTRANCE_WIDTH / 2, 12 * scaleFactor, -roomRadius + 2]} intensity={15} color="#ffcc88" distance={15 * scaleFactor} decay={2} />
+                </group>
+            )}
+
+            {/* Corridor lights — only when player is in the corridor and NOT in the room */}
+            {isPlayerInCorridor && !isPlayerInRoom && (
+                <group>
+                    {index === currentAltarIndex && (
+                        <>
+                            <pointLight position={[0, roomHeight * 0.35, roomRadius + corridorLen / 2 - corridorLen / 4]} intensity={100} distance={80 * scaleFactor} color="#baddff" decay={2} />
+                            <pointLight position={[0, roomHeight * 0.35, roomRadius + corridorLen / 2 + corridorLen / 4]} intensity={100} distance={80 * scaleFactor} color="#baddff" decay={2} />
+                        </>
+                    )}
+                </group>
             )}
 
             {/* Floor */}
@@ -760,11 +862,18 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
                     <boxGeometry args={[ENTRANCE_WIDTH + 0.5, 18.5 * scaleFactor, 0.5]} />
                     <meshStandardMaterial color="#000000" transparent opacity={0.5} />
                 </mesh>
-                {isPlayerIn && (
-                    <>
-                        <pointLight position={[-ENTRANCE_WIDTH / 2, 12 * scaleFactor, 2]} intensity={15} color="#ffcc88" distance={15 * scaleFactor} decay={2} />
-                        <pointLight position={[ENTRANCE_WIDTH / 2, 12 * scaleFactor, 2]} intensity={15} color="#ffcc88" distance={15 * scaleFactor} decay={2} />
-                    </>
+                {/* Ritual Entrance Gate Visual */}
+                {index === currentAltarIndex && altarRoomWave > 0 && altarRoomWave <= MAX_WAVES && !GAME_CONFIG.DISABLE_ALTAR_GATES && (
+                    <mesh position={[0, 9 * scaleFactor, 0]}>
+                        <boxGeometry args={[ENTRANCE_WIDTH, 18 * scaleFactor, 0.5]} />
+                        <meshStandardMaterial
+                            color="#2a4a6a" // Darker blue for more depth
+                            transparent
+                            opacity={0.6}
+                            emissive="#4a8aca"
+                            emissiveIntensity={0.4} // Reduced intensity to avoid "white wall" effect
+                        />
+                    </mesh>
                 )}
             </group>
 
@@ -797,6 +906,7 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
             {/* Statues & Pedestals around the perimeter */}
             <InstancedStatues
                 isCurrent={index === currentAltarIndex}
+                isPlayerInRoom={isPlayerInRoom && ritualPhase === 'normal'}
                 count={STATUE_COUNT}
                 radius={roomRadius - 12.5 * scaleFactor}
                 scale={scaleFactor}
@@ -822,15 +932,9 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
                 </mesh>
 
                 {/* Corridor lights - dimmed significantly to avoid washing out the fog */}
-                {isPlayerIn && (
-                    <>
-                        <pointLight position={[0, roomHeight * 0.35, -corridorLen / 4]} intensity={100} distance={80 * scaleFactor} color="#baddff" decay={2} />
-                        <pointLight position={[0, roomHeight * 0.35, corridorLen / 4]} intensity={100} distance={80 * scaleFactor} color="#baddff" decay={2} />
-                    </>
-                )}
 
                 {/* Gate visual */}
-                {!GAME_CONFIG.DISABLE_ALTAR_GATES && !(currentAltarIndex > index || (currentAltarIndex === index && altarRoomWave > MAX_WAVES)) && (
+                {!GAME_CONFIG.DISABLE_ALTAR_GATES && !((index === currentAltarIndex) && (altarRoomWave > MAX_WAVES)) && (
                     <mesh position={[0, 9 * scaleFactor, -corridorLen / 2 + 5]}>
                         <boxGeometry args={[ENTRANCE_WIDTH, 18 * scaleFactor, 0.5]} />
                         <meshStandardMaterial
@@ -846,7 +950,7 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
 
 
 
-            <CentralAltar isCurrent={isPlayerIn} scale={scaleFactor} cz={cz} />
+            <CentralAltar isCurrent={index === currentAltarIndex} isPlayerInRoom={isPlayerInRoom} scale={scaleFactor} cz={cz} />
         </group >
     );
 });

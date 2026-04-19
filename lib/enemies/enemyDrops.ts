@@ -8,6 +8,13 @@ function rand(min: number, max: number): number {
 
 function add(drops: Record<string, number>, item: string, amount: number = 1) {
     if (amount <= 0) return;
+    if (item === 'echoes') {
+        const { useAccessoryStore } = require('../store/accessoryStore');
+        const echoBonus = useAccessoryStore.getState().getMouthpieceBonus().echoBonus || 0;
+        if (echoBonus > 0) {
+            amount = Math.max(amount, Math.ceil(amount * (1 + echoBonus)));
+        }
+    }
     drops[item] = (drops[item] || 0) + amount;
 }
 

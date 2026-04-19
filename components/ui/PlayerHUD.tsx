@@ -4,6 +4,7 @@ import { usePlayerStore } from '@/lib/store';
 import { useEffect, useState, useMemo, memo } from 'react';
 import { getTerms, CLASS_INFO } from '@/lib/store/playerStore';
 import { useShallow } from 'zustand/react/shallow';
+import { useSettingsStore } from '@/lib/store/settingsStore';
 
 /**
  * PlayerHUD Component
@@ -110,11 +111,12 @@ export const PlayerHUD = memo(function PlayerHUD() {
     };
 
     const terms = getTerms(playerClass);
+    const isMobile = useSettingsStore((state) => state.isMobile);
 
     return (
-        <div className="absolute top-4 right-4 pointer-events-none z-50 flex flex-col items-end gap-2">
+        <div className={`absolute ${isMobile ? 'top-2 right-2' : 'top-4 right-4'} pointer-events-none z-50 flex flex-col items-end gap-2`}>
             {/* Main Stats Panel */}
-            <div className="bg-black/80 backdrop-blur-md rounded-xl p-4 min-w-[240px] border border-white/10 shadow-xl">
+            <div className={`bg-black/80 backdrop-blur-md rounded-xl ${isMobile ? 'p-2 min-w-[180px]' : 'p-4 min-w-[240px]'} border border-white/10 shadow-xl`}>
 
                 {/* Header: Class & Level */}
                 <div className="flex items-center justify-between mb-3">
@@ -211,8 +213,8 @@ export const PlayerHUD = memo(function PlayerHUD() {
                 </div>
             </div>
 
-            {/* Player Position Display */}
-            <PositionDisplay />
+            {/* Player Position Display — hidden on mobile */}
+            {!isMobile && <PositionDisplay />}
 
             {/* Mobile-friendly spacing */}
             <div className="h-safe-bottom" />
@@ -223,7 +225,12 @@ export const PlayerHUD = memo(function PlayerHUD() {
 export default PlayerHUD;
 
 function PositionDisplay() {
-    const position = usePlayerStore((state) => state.position);
+    const { x, y, z } = usePlayerStore(useShallow(state => ({
+        x: Math.round(state.position[0]),
+        y: Math.round(state.position[1] * 10) / 10,
+        z: Math.round(state.position[2])
+    })));
+
     return (
         <div className="bg-black/80 backdrop-blur-md rounded-xl px-4 py-3 min-w-[200px] border border-white/10 shadow-xl">
             <div className="flex items-center gap-2 mb-2">
@@ -233,15 +240,15 @@ function PositionDisplay() {
             <div className="grid grid-cols-3 gap-2 text-center">
                 <div className="bg-red-900/40 rounded-lg px-2 py-1.5 border border-red-500/30">
                     <div className="text-red-400 text-[9px] font-bold uppercase">X</div>
-                    <div className="text-white font-mono font-bold text-sm">{Math.round(position[0])}</div>
+                    <div className="text-white font-mono font-bold text-sm">{x}</div>
                 </div>
                 <div className="bg-green-900/40 rounded-lg px-2 py-1.5 border border-green-500/30">
                     <div className="text-green-400 text-[9px] font-bold uppercase">Y</div>
-                    <div className="text-white font-mono font-bold text-sm">{position[1].toFixed(1)}</div>
+                    <div className="text-white font-mono font-bold text-sm">{y.toFixed(1)}</div>
                 </div>
                 <div className="bg-blue-900/40 rounded-lg px-2 py-1.5 border border-blue-500/30">
                     <div className="text-blue-400 text-[9px] font-bold uppercase">Z</div>
-                    <div className="text-white font-mono font-bold text-sm">{Math.round(position[2])}</div>
+                    <div className="text-white font-mono font-bold text-sm">{z}</div>
                 </div>
             </div>
         </div>

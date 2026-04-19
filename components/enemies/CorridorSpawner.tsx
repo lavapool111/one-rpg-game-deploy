@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { Tuba } from './Tuba';
 import { Trumpet } from './Trumpet';
 import { Trombone } from './Trombone';
-import { usePlayerStore } from '@/lib/store';
+import { usePlayerStore, useGameStore } from '@/lib/store';
 import { Pillar } from '@/lib/game/pillars';
 
 /**
@@ -74,7 +74,8 @@ export function CorridorSpawner({
     });
 
     const playerLevel = usePlayerStore((state) => state.level);
-    const playerPosition = usePlayerStore((state) => state.position);
+    // REMOVED: const playerPosition = usePlayerStore((state) => state.position);
+    // This hook caused re-renders every frame. We now use getState() in a throttled effect.
 
     // Get the entrance position for each corridor
     const corridorEntrances = useMemo(() => {
@@ -87,8 +88,8 @@ export function CorridorSpawner({
     }, [arenaRadius]);
 
     // Check which corridor the player is near
-    const getCorridorProximity = useCallback((): { corridor: CorridorName | null; distance: number } => {
-        const [px, , pz] = playerPosition;
+    const getCorridorProximity = useCallback((pos: [number, number, number]): { corridor: CorridorName | null; distance: number } => {
+        const [px, , pz] = pos;
 
         let nearestCorridor: CorridorName | null = null;
         let nearestDistance = Infinity;
@@ -105,7 +106,7 @@ export function CorridorSpawner({
         }
 
         return { corridor: nearestCorridor, distance: nearestDistance };
-    }, [playerPosition, corridorEntrances]);
+    }, [corridorEntrances]);
 
     // Generate spawn position within a corridor
     const getCorridorSpawnPosition = useCallback((corridor: CorridorName): [number, number, number] => {
@@ -209,70 +210,95 @@ export function CorridorSpawner({
         setEnemies((prev) => prev.filter((e) => e.id !== id));
     }, []);
 
+    // Helper for staggered spawning
+    const staggeredSetEnemies = useCallback((newEnemies: Enemy[]) => {
+        let j = 0;
+        const addNextBatch = () => {
+            setEnemies(prev => {
+                const nextJ = Math.min(j + 2, newEnemies.length);
+                const slice = newEnemies.slice(j, nextJ);
+                j = nextJ;
+                if (j < newEnemies.length) {
+                    requestAnimationFrame(addNextBatch);
+                }
+                return [...prev, ...slice];
+            });
+        };
+        requestAnimationFrame(addNextBatch);
+    }, []);
+
     // Check player proximity and spawn/despawn enemies
+    // Throttled to avoid performance impact of every-frame checks
     useEffect(() => {
         if (!enabled) return;
 
-        const { corridor: nearestCorridor, distance } = getCorridorProximity();
-
-        // Only despawn if player is far from the active corridor
-        if (activeCorridor && nearestCorridor !== activeCorridor && distance > CORRIDOR_DESPAWN_DISTANCE) {
-            setEnemies([]);
-            setActiveCorridor(null);
-            return;
-        }
-
-        // Spawn enemies if player enters a corridor zone (and it hasn't been cleared)
-        if (nearestCorridor && distance < CORRIDOR_SPAWN_DISTANCE && nearestCorridor !== activeCorridor) {
-            // Spawn corridor enemies (if not already spawned this session)
-            if (!hasSpawnedRef.current[nearestCorridor]) {
-                const newEnemies = generateCorridorEnemies(nearestCorridor);
-                setEnemies(newEnemies);
-                hasSpawnedRef.current[nearestCorridor] = true;
-
-                // Play spawn sound
-                if (newEnemies.length > 0) {
-                    import('@/lib/audio/AudioManager').then((m) => {
-                        const AudioManager = m.default;
-                        AudioManager.load('trumpet-fanfare', '/audio/trumpet-fanfare-announcement-zeroframe-audio-2-1-00-03.mp3');
-                        AudioManager.play('trumpet-fanfare', 'sfx', { volume: 0.5 });
-                    });
+        const checkProximity = () => {
+            const gameStore = useGameStore.getState();
+            if (!gameStore.simulationActive) return;
+            if (gameStore.isInAltarRoom) {
+                if (enemies.length > 0) {
+                    setEnemies([]);
+                    setActiveCorridor(null);
                 }
+                return;
             }
-            setActiveCorridor(nearestCorridor);
-        }
-    }, [enabled, getCorridorProximity, activeCorridor, generateCorridorEnemies]);
+            const currentPos = usePlayerStore.getState().position;
+            const { corridor: nearestCorridor, distance } = getCorridorProximity(currentPos);
+
+            // Use refs or local variables to avoid closure over stale state
+            // But activeCorridor is state, so we use the functional update pattern if needed
+            // Actually, we can just read the current state from the effect if we include dependencies
+
+            // Handle despawn
+            if (activeCorridor && nearestCorridor !== activeCorridor && distance > CORRIDOR_DESPAWN_DISTANCE) {
+                setEnemies([]);
+                setActiveCorridor(null);
+                return;
+            }
+
+            // Handle spawn
+            if (nearestCorridor && distance < CORRIDOR_SPAWN_DISTANCE && nearestCorridor !== activeCorridor) {
+                if (!hasSpawnedRef.current[nearestCorridor]) {
+                    const newEnemies = generateCorridorEnemies(nearestCorridor);
+                    staggeredSetEnemies(newEnemies);
+                    hasSpawnedRef.current[nearestCorridor] = true;
+
+                    if (newEnemies.length > 0) {
+                        import('@/lib/audio/AudioManager').then((m) => {
+                            const AudioManager = m.default;
+                            AudioManager.load('trumpet-fanfare', '/audio/trumpet-fanfare-announcement-zeroframe-audio-2-1-00-03.mp3');
+                            AudioManager.play('trumpet-fanfare', 'sfx', { volume: 0.5 });
+                        });
+                    }
+                }
+                setActiveCorridor(nearestCorridor);
+            }
+        };
+
+        const interval = setInterval(checkProximity, 500); // Check every 500ms
+        return () => clearInterval(interval);
+    }, [enabled, activeCorridor, getCorridorProximity, generateCorridorEnemies]);
 
     // Respawn enemies after 10 seconds if all are dead and player is still in the corridor
     useEffect(() => {
         if (!enabled || !activeCorridor || activeCorridor === 'south') return;
 
-        if (enemies.length === 0 && hasSpawnedRef.current[activeCorridor]) {
+        let one = 10000
+
+        if (activeCorridor === 'east') {
+            one = 5000
+        }
+
+        if (enemies.length === 0 && hasSpawnedRef.current[activeCorridor] && !useGameStore.getState().isInAltarRoom) {
             const respawnTimer = setTimeout(() => {
-                setEnemies(generateCorridorEnemies(activeCorridor));
-            }, 10000);
+                staggeredSetEnemies(generateCorridorEnemies(activeCorridor));
+            }, one);
 
             return () => clearTimeout(respawnTimer);
         }
     }, [enabled, activeCorridor, enemies.length, generateCorridorEnemies]);
 
-    // Reset spawned flags when player dies or resets
-    useEffect(() => {
-        const unsubscribe = usePlayerStore.subscribe((state, prevState) => {
-            // Reset when health goes from 0 to full (respawn)
-            if (prevState.health <= 0 && state.health > 0) {
-                hasSpawnedRef.current = {
-                    north: false,
-                    south: false,
-                    east: false,
-                    west: false,
-                };
-                setEnemies([]);
-                setActiveCorridor(null);
-            }
-        });
-        return unsubscribe;
-    }, []);
+
 
     if (!enabled) return null;
 

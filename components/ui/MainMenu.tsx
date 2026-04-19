@@ -1,6 +1,8 @@
 'use client';
 
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
+import { useInventoryStore } from '@/lib/store/inventoryStore';
+import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { useEffect, useState, useRef } from 'react';
 import { hasSave, loadGame } from '@/lib/db';
 import { HowToPlayModal } from './HowToPlayModal';
@@ -74,6 +76,9 @@ export function MainMenu() {
                 setIsVisible(false);
                 setTimeout(() => {
                     loadState(save);
+                    useGameStore.getState().loadState(save);
+                    useInventoryStore.getState().loadState(save);
+                    useAccessoryStore.getState().loadState(save);
                     setGameState('playing');
                 }, 500);
             }
@@ -83,7 +88,7 @@ export function MainMenu() {
     };
 
     return (
-        <div className={`fixed inset-0 z-50 flex items-center bg-slate-950 transition-opacity duration-700 ${isVisible ? 'opacity-100' : 'opacity-0'}`}>
+        <div className={`fixed inset-0 z-50 flex items-center bg-slate-950 transition-opacity duration-700 ${isVisible ? 'opacity-100' : 'opacity-0'}`} style={{ overflow: 'hidden' }}>
             {/* Moody, dark atmospheric background */}
             <div className="absolute inset-0 overflow-hidden pointer-events-none">
                 {/* Deep blue radial base */}
@@ -99,7 +104,7 @@ export function MainMenu() {
             </div>
 
             {/* Left-Aligned UI Container */}
-            <div className="relative z-10 flex flex-col justify-center h-full w-full md:w-fit pl-10 md:pl-24 lg:pl-32 py-12">
+            <div className="relative z-10 flex flex-col justify-center h-full" style={{ paddingLeft: 'clamp(2.5rem, 8vw, 10rem)', paddingTop: '7.5rem', paddingBottom: '2rem' }}>
 
                 {/* Game Title */}
                 <div className="mb-14 md:mb-20">
@@ -139,7 +144,7 @@ export function MainMenu() {
                 </div>
 
                 {/* Footer/Version Info */}
-                <div className="absolute bottom-10 left-10 md:left-24 lg:left-32 text-slate-500/50 text-xs font-mono tracking-wider">
+                <div className="mt-auto pt-8 text-slate-500/50 text-xs font-mono tracking-wider">
                     v0.1.0 • EARLY ACCESS {isMobile && '• MOBILE DETECTED'}
                 </div>
             </div>

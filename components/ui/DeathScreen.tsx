@@ -34,8 +34,13 @@ export function DeathScreen() {
     }, [respawn, setGameState]);
 
     useEffect(() => {
-        // Instant visibility
-        setIsVisible(true);
+        // Delay visibility slightly to allow HUD unmounting and simulation stop 
+        // to happen without competing for the main thread during the initial overlay mount.
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                setIsVisible(true);
+            });
+        });
 
         // Countdown timer
         const timer = setInterval(() => {

@@ -10,7 +10,7 @@ import { getTierFromGold, generateTierRewards, DungeonTier, DungeonRewards, TIER
  * Central state management for game state
  */
 
-export type GameState = 'menu' | 'intro' | 'classSelect' | 'playing' | 'paused' | 'gameOver';
+export type GameState = 'menu' | 'intro' | 'classSelect' | 'playing' | 'paused' | 'gameOver' | 'altarIntro';
 export type Location = 'band_room' | 'backstage_halls';
 
 export interface DungeonState {
@@ -32,6 +32,7 @@ export interface DungeonResult {
 export interface GameStore {
     // Game state
     gameState: GameState;
+    simulationActive: boolean;
     score: number;
     highScore: number;
     phase: number;
@@ -52,6 +53,7 @@ export interface GameStore {
 
     // Actions
     setGameState: (state: GameState) => void;
+    setSimulationActive: (active: boolean) => void;
     addScore: (points: number) => void;
     setPhase: (phase: number) => void;
     setPhaseMeter: (meter: number) => void;
@@ -79,17 +81,30 @@ export interface GameStore {
 
     // --- Altar Room State ---
     altarRoomWave: number;
+    setAltarRoomWave: (wave: number) => void;
+    altarRitualStarted: boolean;
+    setAltarRitualStarted: (started: boolean) => void;
     isInAltarRoom: boolean;
     altarRoomWaveEnemiesRemaining: number;
     altarRoomWaveEnemiesTotal: number;
     altarDeathCount: number;
     currentAltarIndex: number;
-    setAltarRoomWave: (wave: number) => void;
     setIsInAltarRoom: (isInRoom: boolean) => void;
     setAltarRoomWaveEnemies: (remaining: number, total: number) => void;
     incrementAltarDeathCount: () => void;
     resetAltarDeathCount: () => void;
     setAltarIndex: (index: number) => void;
+
+    // --- Outer Backstage ---
+    outerBackstageUnlocked: boolean;
+    unlockOuterBackstage: () => void;
+
+    // --- Altar Lore ---
+    hasSeenAltarIntro: boolean;
+    setHasSeenAltarIntro: (seen: boolean) => void;
+
+    version: number;
+    loadState: (saved: any) => void;
 }
 
 const INITIAL_HEALTH = 100;
@@ -98,6 +113,7 @@ export const useGameStore = create<GameStore>()(
     subscribeWithSelector((set, get) => ({
         // Initial state
         gameState: 'menu',
+        simulationActive: false,
         score: 0,
         highScore: 0,
         phase: 1,
@@ -116,27 +132,47 @@ export const useGameStore = create<GameStore>()(
 
         // --- Altar Room ---
         altarRoomWave: 0,
+        setAltarRoomWave: (wave: number) => set((state: GameStore) => ({ altarRoomWave: wave, version: state.version + 1 })),
+        altarRitualStarted: false,
+        setAltarRitualStarted: (started: boolean) => set((state: GameStore) => ({ altarRitualStarted: started, version: state.version + 1 })),
         isInAltarRoom: false,
         altarRoomWaveEnemiesRemaining: 0,
         altarRoomWaveEnemiesTotal: 0,
         altarDeathCount: 0,
         currentAltarIndex: 0,
-        setAltarRoomWave: (wave: number) => set({ altarRoomWave: wave }),
-        setIsInAltarRoom: (isInRoom: boolean) => set({ isInAltarRoom: isInRoom }),
+        setIsInAltarRoom: (isInRoom: boolean) => set((state: GameStore) => ({ isInAltarRoom: isInRoom, version: state.version + 1 })),
         setAltarRoomWaveEnemies: (remaining: number, total: number) => set({
             altarRoomWaveEnemiesRemaining: remaining,
-            altarRoomWaveEnemiesTotal: total
+            altarRoomWaveEnemiesTotal: total,
         }),
-        incrementAltarDeathCount: () => set((state: GameStore) => ({ altarDeathCount: state.altarDeathCount + 1 })),
-        resetAltarDeathCount: () => set({ altarDeathCount: 0 }),
-        setAltarIndex: (index: number) => set({ currentAltarIndex: index }),
+        incrementAltarDeathCount: () => set((state: GameStore) => ({ altarDeathCount: state.altarDeathCount + 1, version: state.version + 1 })),
+        resetAltarDeathCount: () => set((state: GameStore) => ({ altarDeathCount: 0, version: state.version + 1 })),
+        setAltarIndex: (index: number) => set((state: GameStore) => ({ currentAltarIndex: index, version: state.version + 1 })),
+
+        // --- Outer Backstage ---
+        outerBackstageUnlocked: false,
+        unlockOuterBackstage: () => set((state: GameStore) => ({ outerBackstageUnlocked: true, version: state.version + 1 })),
+
+        // --- Altar Lore ---
+        hasSeenAltarIntro: false,
+        setHasSeenAltarIntro: (seen: boolean) => set((state: GameStore) => ({ hasSeenAltarIntro: seen, version: state.version + 1 })),
+
+        version: 0,
+
+        loadState: (saved: any) => set((state) => ({
+            currentAltarIndex: saved.currentAltarIndex ?? state.currentAltarIndex,
+            outerBackstageUnlocked: saved.outerBackstageUnlocked ?? state.outerBackstageUnlocked,
+            hasSeenAltarIntro: saved.hasSeenAltarIntro ?? state.hasSeenAltarIntro,
+            version: state.version + 1,
+        })),
 
         // Enemy Buff Actions
         addEuphoniumShield: () => set((state) => ({ activeEuphoniumShields: state.activeEuphoniumShields + 1 })),
         removeEuphoniumShield: () => set((state) => ({ activeEuphoniumShields: Math.max(0, state.activeEuphoniumShields - 1) })),
 
         // Actions
-        setGameState: (gameState) => set({ gameState }),
+        setGameState: (gameState) => set((state: GameStore) => ({ gameState, version: state.version + 1 })),
+        setSimulationActive: (simulationActive) => set((state: GameStore) => ({ simulationActive, version: state.version + 1 })),
 
         addScore: (points) => set((state) => ({
             score: state.score + points,
@@ -157,6 +193,7 @@ export const useGameStore = create<GameStore>()(
 
         heal: (amount) => set((state) => ({
             playerHealth: Math.min(state.playerMaxHealth, state.playerHealth + amount),
+            version: state.version + 1,
         })),
 
         incrementCombo: () => set((state) => ({ combo: state.combo + 1 })),
@@ -179,13 +216,14 @@ export const useGameStore = create<GameStore>()(
             altarRoomWaveEnemiesRemaining: 0,
             altarRoomWaveEnemiesTotal: 0,
             altarDeathCount: 0,
-            currentAltarIndex: 0
+            currentAltarIndex: 0,
+            version: get().version + 1
         }),
 
         // Dungeon actions
         enterDungeon: () => {
             const timeLimit = useAccessoryStore.getState().getDungeonTimeLimit();
-            set({
+            set((state) => ({
                 currentLocation: 'backstage_halls',
                 dungeonState: {
                     startTime: Date.now(),
@@ -194,16 +232,18 @@ export const useGameStore = create<GameStore>()(
                     keys: { melodic: 0, resonance: 0 },
                     trialRoomKills: 0,
                 },
-            });
+                version: state.version + 1,
+            }));
         },
 
         exitDungeon: () => {
             // Reset position to dungeon entrance to prevent being stranded in Band Room at dungeon coords
             usePlayerStore.getState().setPosition(0, 1.5, -560);
-            set({
+            set((state) => ({
                 currentLocation: 'band_room',
                 dungeonState: null,
-            });
+                version: state.version + 1,
+            }));
         },
 
         // Escape dungeon through exit door - KEEP gold & grant rewards
@@ -263,6 +303,7 @@ export const useGameStore = create<GameStore>()(
                 dungeonState: null,
                 lastDungeonResult: dungeonResult,
                 score: prevState.score + goldCollected,
+                version: prevState.version + 1,
             }));
 
             console.log(`Dungeon escaped! Tier: ${tierName}, Gold: ${goldCollected}`);
@@ -272,16 +313,18 @@ export const useGameStore = create<GameStore>()(
         failDungeonRun: () => {
             // Set player position near dungeon door in south corridor
             usePlayerStore.getState().setPosition(0, 1.5, -560);
-            set({
+            set((state) => ({
                 currentLocation: 'band_room',
                 dungeonState: null,
-            });
+                version: state.version + 1,
+            }));
         },
 
         collectGold: (amount) => set((state) => ({
             dungeonState: state.dungeonState
                 ? { ...state.dungeonState, goldCollected: state.dungeonState.goldCollected + amount }
                 : null,
+            version: state.version + 1,
         })),
 
         addKey: (type) => set((state) => ({
@@ -294,6 +337,7 @@ export const useGameStore = create<GameStore>()(
                     },
                 }
                 : null,
+            version: state.version + 1,
         })),
 
         // Use a key (for opening vaults)
@@ -310,6 +354,7 @@ export const useGameStore = create<GameStore>()(
                         [type]: state.dungeonState.keys[type] - 1,
                     },
                 },
+                version: state.version + 1,
             });
             return true;
         },
@@ -319,15 +364,19 @@ export const useGameStore = create<GameStore>()(
             dungeonState: state.dungeonState
                 ? { ...state.dungeonState, timeLimit: state.dungeonState.timeLimit + seconds }
                 : null,
+            version: state.version + 1,
         })),
 
-        // Clear last dungeon result
-        clearDungeonResult: () => set({ lastDungeonResult: null }),
+        clearDungeonResult: () => set((state) => ({
+            lastDungeonResult: null,
+            version: state.version + 1
+        })),
 
         incrementTrialRoomKills: () => set((state) => ({
             dungeonState: state.dungeonState
                 ? { ...state.dungeonState, trialRoomKills: state.dungeonState.trialRoomKills + 1 }
                 : null,
+            version: state.version + 1,
         })),
     }))
 );

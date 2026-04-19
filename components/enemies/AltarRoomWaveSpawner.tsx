@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, memo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import { usePlayerStore, useGameStore } from '@/lib/store';
 import { Trumpet } from './Trumpet';
@@ -9,8 +9,8 @@ import { Tuba } from './Tuba';
 import { FrenchHorn } from './FrenchHorn';
 import { Euphonium } from './Euphonium';
 import AudioManager from '@/lib/audio/AudioManager';
-import { getAltarRadius, getAltarCenterZ, getAltarTriggerZ } from '@/lib/game/altarGeometry';
-import { getAltarCompletionDrops } from '@/lib/game/enemyDrops';
+import { getAltarRadius, getAltarCenterZ, getAltarTriggerZ, getAltarExitZ } from '@/lib/game/altarGeometry';
+import { getAltarCompletionDrops } from '@/lib/enemies/enemyDrops';
 import { useInventoryStore } from '@/lib/store/inventoryStore';
 
 type EnemyType = 'trumpet' | 'trombone' | 'tuba' | 'french_horn' | 'euphonium';
@@ -20,6 +20,7 @@ interface Enemy {
     type: EnemyType;
     position: [number, number, number];
     level: number;
+    isDead?: boolean;
 }
 
 const MAX_WAVES = 5;
@@ -45,7 +46,7 @@ function generateEnemyId(currentWave: number): string {
     return `wave-enemy-${currentWave}-${waveEnemyIdCounter++}-${Math.random().toString(36).substr(2, 9)}`;
 }
 
-export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
+export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
     const altarCenterZ = getAltarCenterZ(index);
     const roomRadius = getAltarRadius(index);
     const triggerZ = getAltarTriggerZ(index);
@@ -55,7 +56,8 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
     // Statue ring for spawning
     const statueRadius = roomRadius - 12.5;
 
-    const currentAltarIndex = useGameStore(state => state.currentAltarIndex);
+    // Remove reactive currentAltarIndex hook for performance
+    // const currentAltarIndex = useGameStore(state => state.currentAltarIndex);
     const setAltarIndex = useGameStore(state => state.setAltarIndex);
 
     // 0 = Not started, 1-5 = Active running wave, 6 = Completed
@@ -104,7 +106,6 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
 
         setEnemies(prev => [...prev, newEnemy]);
         totalSpawnedInWave.current++;
-        console.log(`[Wave ${waveNum}] Reinforcement spawned at statue ${statueIndex}. Total spawned: ${totalSpawnedInWave.current}/${config.quota}`);
     }, []);
 
     // Spawn a specific wave
@@ -147,38 +148,80 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
         // Play spawn noise
         AudioManager.play('trumpet-fanfare', 'sfx', { volume: 0.6 });
 
-        totalSpawnedInWave.current = newEnemies.length;
-        setEnemies(newEnemies);
+        // Staggered addition to state to prevent FPS spikes (only for large waves)
+        const totalToSpawn = newEnemies.length;
+        totalSpawnedInWave.current = totalToSpawn;
         setCurrentWave(waveNum);
         useGameStore.getState().setAltarRoomWave(waveNum);
-        // Progress is Quota - Defeated. Initially Quota remaining.
+        useGameStore.getState().setAltarRitualStarted(true);
         useGameStore.getState().setAltarRoomWaveEnemies(config.quota, config.quota);
 
-        // Allow brief time for react state to settle before checking empty conditions
-        setTimeout(() => {
+        if (totalToSpawn <= 24) {
+            // Spawn all at once for smaller waves
+            setEnemies(newEnemies);
             isSpawning.current = false;
-        }, 1000);
+        } else {
+            // Stagger for very large waves
+            setEnemies([]); // Clear current first
+            let currentIndex = 0;
+            const addNextBatch = () => {
+                setEnemies(prev => {
+                    const nextI = Math.min(currentIndex + 2, totalToSpawn);
+                    const slice = newEnemies.slice(currentIndex, nextI);
+                    currentIndex = nextI;
 
-    }, []);
+                    if (currentIndex < totalToSpawn) {
+                        requestAnimationFrame(addNextBatch);
+                    } else {
+                        isSpawning.current = false;
+                    }
+                    return [...prev, ...slice];
+                });
+            };
+            requestAnimationFrame(addNextBatch);
+        }
+    }, [altarCenterZ, altarLevelBase, statueRadius]);
 
     // Monitor for initial trigger
-    useFrame(() => {
-        // Only run logic if this spawner is for the current active altar
-        if (index !== currentAltarIndex) return;
+    useFrame((state) => {
+        // PERF: Skip entire frame if simulation is paused
+        if (!useGameStore.getState().simulationActive) return;
 
-        const pos = usePlayerStore.getState().position;
-        const isCurrentlyInRoom = pos[2] > triggerZ;
-        const wasInRoom = useGameStore.getState().isInAltarRoom;
+        // Optimization: Throttled check for distant spawners
+        const nowMs = Date.now();
+        const playerPos = usePlayerStore.getState().position;
+        const distFromCenter = Math.abs(playerPos[2] - altarCenterZ);
 
-        if (isCurrentlyInRoom !== wasInRoom) {
-            useGameStore.getState().setIsInAltarRoom(isCurrentlyInRoom);
+        // If very far, skip logic entirely (every frame)
+        if (distFromCenter > 1000) return;
+
+        // If somewhat far, throttle to every 5 frames
+        if (distFromCenter > 300 && state.clock.getElapsedTime() * 60 % 5 !== 0) return;
+
+        const store = useGameStore.getState();
+        const currentAltarIndex = store.currentAltarIndex;
+        const exitZ = altarCenterZ + roomRadius;
+        const isCurrentlyInZone = playerPos[2] > triggerZ && playerPos[2] < nextRoomTriggerZ;
+        const isPhysicallyInRoom = playerPos[2] > triggerZ && playerPos[2] < exitZ;
+        const wasInRoom = store.isInAltarRoom;
+
+        // Hijack currentAltarIndex if we are in this zone but the store thinks we are elsewhere
+        if (isCurrentlyInZone && index !== currentAltarIndex) {
+            setAltarIndex(index);
+        }
+
+        if (isCurrentlyInZone !== wasInRoom && index === currentAltarIndex) {
+            store.setIsInAltarRoom(isCurrentlyInZone);
+            if (isCurrentlyInZone) {
+                // Force stop the hub music when entering the altar
+                AudioManager.stop('bg-ambience');
+            }
         }
 
         // Check for transition to NEXT altar
-        if (currentWave > MAX_WAVES && pos[2] > nextRoomTriggerZ) {
-            console.log(`Transitioning from Altar ${index} to ${index + 1}`);
+        if (index === currentAltarIndex && currentWave > MAX_WAVES && playerPos[2] > nextRoomTriggerZ) {
             setAltarIndex(index + 1);
-            useGameStore.getState().setAltarRoomWave(0);
+            store.setAltarRoomWave(0);
             // reset local state too
             setCurrentWave(0);
             hasTriggeredInitial.current = false;
@@ -186,43 +229,46 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
         }
 
         // Monitor for initial trigger
-        if (currentWave === 0 && pos[2] > triggerZ) {
+        if (currentWave === 0 && isPhysicallyInRoom) {
             // Check if we already have a timer or if we're in the middle of launching
             if (!initialWaveTimerRef.current && !hasTriggeredInitial.current) {
                 hasTriggeredInitial.current = true;
-                console.log("Player entered Altar Room. Wave 1 starts in 10 seconds.");
+
+                const isTempoActive = usePlayerStore.getState().tempo > 0;
 
                 initialWaveTimerRef.current = setTimeout(() => {
                     spawnWave(1);
                     initialWaveTimerRef.current = null;
-                }, 10000);
+                }, isTempoActive ? 0 : 10000);
+
+                // Immediately mark as started so barriers close
+                store.setAltarRitualStarted(true);
             }
         }
 
-        // Reset logic: if wave is set back to 0 from the outside (like on 10 deaths), reset our triggers
-        if (currentWave === 0 && hasTriggeredInitial.current && pos[2] <= triggerZ) {
+        // Reset logic: if player leaves room backwards (and ritual hasn't fully started waves yet), reset our triggers
+        if (currentWave === 0 && hasTriggeredInitial.current && playerPos[2] <= triggerZ) {
             hasTriggeredInitial.current = false;
-            console.log("Resetting altar spawner triggers because wave was reset and player is outside.");
+            store.setAltarRitualStarted(false);
         }
 
         // Repeatable logic: if wave is 6 (Completed) and player has left the room, reset to 0 to allow re-entry
-        if (currentWave > MAX_WAVES && pos[2] < triggerZ - 50) {
+        if (currentWave > MAX_WAVES && playerPos[2] < triggerZ - 50) {
             setCurrentWave(0);
-            useGameStore.getState().setAltarRoomWave(0);
+            store.setAltarRoomWave(0);
             hasTriggeredInitial.current = false;
-            console.log("Altar Room cleared and player left. Resetting for repeatability.");
         }
 
         // Reinforcement logic
         if (currentWave > 0 && currentWave <= MAX_WAVES && !isSpawning.current && !isBufferPhase.current) {
             const config = WAVES_CONFIG[currentWave];
-            const now = Date.now();
+            const activeEnemiesCount = enemies.filter(e => !e.isDead).length;
 
             // Refill to minActive if we have quota left, but throttle to 1 every 500ms
-            if (enemies.length < config.minActive && totalSpawnedInWave.current < config.quota) {
-                if (now - lastReinforcementTime.current > 500) {
+            if (activeEnemiesCount < config.minActive && totalSpawnedInWave.current < config.quota) {
+                if (nowMs - lastReinforcementTime.current > 500) {
                     spawnIndividualEnemy(currentWave);
-                    lastReinforcementTime.current = now;
+                    lastReinforcementTime.current = nowMs;
                 }
             }
         }
@@ -242,7 +288,9 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
     // Monitor wave completion and trigger buffers
     useEffect(() => {
         // Wave is "complete" when all enemies are dead AND we've spawned all we intended to
-        if (currentWave > 0 && currentWave <= MAX_WAVES && enemies.length === 0 && totalSpawnedInWave.current >= waveQuota.current) {
+        // CRITICAL FIX: Add isSpawning.current check to prevent early wave termination
+        const activeEnemiesCount = enemies.filter(e => !e.isDead).length;
+        if (currentWave > 0 && currentWave <= MAX_WAVES && activeEnemiesCount === 0 && totalSpawnedInWave.current >= waveQuota.current && !isSpawning.current) {
             // Use refs for immediate state checks to avoid stale closures
             if (isSpawning.current || isBufferPhase.current) {
                 return;
@@ -256,9 +304,9 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
 
             if (currentWave === MAX_WAVES) {
                 // Completed all waves!
-                console.log("Altar Room Waves Defeated!");
                 setCurrentWave(MAX_WAVES + 1); // Mark as completed
                 useGameStore.getState().setAltarRoomWave(MAX_WAVES + 1);
+                useGameStore.getState().setAltarRitualStarted(false); // Clear ritual started flag
 
                 // Grant Altar Completion Rewards
                 const levelMult = index + 1;
@@ -268,12 +316,21 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
                 const drops = getAltarCompletionDrops(index);
                 useInventoryStore.getState().addMaterials(drops);
 
+                // Crystal Mouthpiece Drop System
+                if (index >= 1) { // Starts at Altar 2 (index 1)
+                    const dropChance = 0.10 + (index - 1) * 0.01;
+                    if (Math.random() < dropChance) {
+                        const maxBonusLevel = index - 1;
+                        const bonusLevel = Math.floor(Math.random() * (maxBonusLevel + 1));
+                        useInventoryStore.getState().obtainMouthpiece('crystal', 1 + bonusLevel);
+                    }
+                }
+
                 // Optional: Trigger a victory sound or reward here
             } else {
                 // Trigger next wave buffer
                 isBufferPhase.current = true; // Set buffer phase flag
                 const nextWave = currentWave + 1;
-                console.log(`Wave ${currentWave} complete. Wave ${nextWave} starting in 5 seconds.`);
 
                 bufferTimerRef.current = setTimeout(() => {
                     spawnWave(nextWave);
@@ -289,18 +346,16 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
                 bufferTimerRef.current = null;
             }
         };
-    }, [enemies.length, currentWave, spawnWave]); // Dependencies: enemies.length, currentWave, and spawnWave (which is useCallback)
+    }, [enemies, currentWave, spawnWave]); // Dependencies: enemies, currentWave, and spawnWave (which is useCallback)
 
     // Auto-reset room after 1 minute if player stays in room seeing "Ritual Complete"
     useEffect(() => {
         if (currentWave > MAX_WAVES) {
-            console.log("Ritual complete. Auto-reset timer started (1 minute).");
             const timer = setTimeout(() => {
                 const pos = usePlayerStore.getState().position;
                 const isCurrentlyInRoom = pos[2] > triggerZ;
 
                 if (isCurrentlyInRoom) {
-                    console.log("Auto-resetting Altar Room after 1 minute of completion.");
                     useGameStore.getState().setAltarRoomWave(0);
                     setCurrentWave(0);
                     hasTriggeredInitial.current = false;
@@ -316,31 +371,102 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
     // They are trapped in the wave gauntlet.
     // UNLESS they reach 10 deaths, then playerStore will reset currentWave to 0.
 
+    const currentWaveRef = useRef(currentWave);
+    currentWaveRef.current = currentWave;
+
+    // Separate cleanup effect for room change
     useEffect(() => {
-        // Cleanup if this room is no longer the current focus
-        if (index !== currentAltarIndex && enemies.length > 0) {
-            console.log(`[AltarRoom ${index}] Cleaning up enemies as room is no longer active.`);
+        const store = useGameStore.getState();
+        if (index !== store.currentAltarIndex && enemies.length > 0) {
             setEnemies([]);
         }
+    }, [index, enemies.length]);
 
-        // Sync with external wave resets (like from 10 deaths logic)
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key.toLowerCase() === 'n') {
+                const state = useGameStore.getState();
+                // Only act if we are the current active altar
+                if (index !== state.currentAltarIndex) return;
+
+                const pos = usePlayerStore.getState().position;
+                const isOutside = pos[2] < triggerZ; // triggerZ is the start of the circular room
+
+                console.log(`[AltarReset] 'N' pressed. Index: ${index}, isOutside: ${isOutside}, currentWave: ${currentWaveRef.current}`);
+
+                if (isOutside) {
+                    // CLEAR the room (Mark as completed) - Barriers will open
+                    console.log(`[AltarReset] Clearing Room ${index} (Skip)`);
+                    state.setAltarRoomWave(MAX_WAVES + 1);
+                    state.setAltarRitualStarted(false);
+                    state.setAltarRoomWaveEnemies(0, 0);
+
+                    setEnemies([]);
+                    setCurrentWave(MAX_WAVES + 1);
+                    hasTriggeredInitial.current = false;
+                    isSpawning.current = false;
+                    isBufferPhase.current = false;
+                    processedDeaths.current.clear();
+                } else {
+                    // RESET the room - Keep barriers (handled by AltarRoom.tsx using altarRitualStarted)
+                    console.log(`[AltarReset] Resetting Room ${index} Ritual`);
+                    state.setAltarRoomWave(0);
+                    state.setAltarRitualStarted(true); // Stay started so barriers remain
+                    state.setAltarRoomWaveEnemies(0, 0);
+
+                    setEnemies([]);
+                    setCurrentWave(0);
+                    hasTriggeredInitial.current = true; // Stay triggered for 10s countdown
+                    isSpawning.current = false;
+                    isBufferPhase.current = false;
+                    processedDeaths.current.clear();
+
+                    // Optional: restart the timer? 
+                    // The useFrame logic will see trigger=true and wave=0 and restart the timer if we null it
+                }
+
+                if (bufferTimerRef.current) {
+                    clearTimeout(bufferTimerRef.current);
+                    bufferTimerRef.current = null;
+                }
+                if (initialWaveTimerRef.current) {
+                    clearTimeout(initialWaveTimerRef.current);
+                    initialWaveTimerRef.current = null;
+                }
+
+                AudioManager.play('death', 'sfx', { volume: 0.5 });
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [index, triggerZ]);
+
+    useEffect(() => {
         const unsubscribe = useGameStore.subscribe(
             (state) => state.altarRoomWave,
             (newWave) => {
-                if (newWave === 0 && currentWave !== 0) {
-                    console.log("Wave reset detected from store. Clearing enemies.");
+                const state = useGameStore.getState();
+                if (newWave === 0 && currentWaveRef.current !== 0) {
                     setEnemies([]);
                     setCurrentWave(0);
                     hasTriggeredInitial.current = false;
                     isSpawning.current = false;
                     isBufferPhase.current = false;
-                    if (bufferTimerRef.current) clearTimeout(bufferTimerRef.current);
-                    if (initialWaveTimerRef.current) clearTimeout(initialWaveTimerRef.current);
+                    processedDeaths.current.clear();
+                    if (bufferTimerRef.current) {
+                        clearTimeout(bufferTimerRef.current);
+                        bufferTimerRef.current = null;
+                    }
+                    if (initialWaveTimerRef.current) {
+                        clearTimeout(initialWaveTimerRef.current);
+                        initialWaveTimerRef.current = null;
+                    }
                 }
             }
         );
         return () => unsubscribe();
-    }, [index, currentAltarIndex, enemies.length, currentWave]);
+    }, []);
 
 
     const handleEnemyDeath = useCallback((id: string) => {
@@ -348,14 +474,22 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
         if (processedDeaths.current.has(id)) return;
         processedDeaths.current.add(id);
 
-        // Pure updater: only filter the array, no side effects
-        setEnemies(prev => prev.filter(e => e.id !== id));
+        // Defer removal from the React tree by a few frames
+        // This distributes the unmounting overhead across multiple frames.
+        requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    // Soft delete: flag as dead to prevent Troika Text EventListener memory leak!
+                    setEnemies(prev => prev.map(e => e.id === id ? { ...e, isDead: true } : e));
 
-        // Side effects outside the updater (runs exactly once per kill)
-        totalDefeatedInWave.current++;
-        const store = useGameStore.getState();
-        const remaining = Math.max(0, waveQuota.current - totalDefeatedInWave.current);
-        store.setAltarRoomWaveEnemies(remaining, waveQuota.current);
+                    // Side effects outside the updater (runs exactly once per kill)
+                    totalDefeatedInWave.current++;
+                    const store = useGameStore.getState();
+                    const remaining = Math.max(0, waveQuota.current - totalDefeatedInWave.current);
+                    store.setAltarRoomWaveEnemies(remaining, waveQuota.current);
+                });
+            });
+        });
     }, []);
 
     return (
@@ -379,6 +513,6 @@ export function AltarRoomWaveSpawner({ index = 0 }: { index?: number }) {
             })}
         </group>
     );
-}
+});
 
 export default AltarRoomWaveSpawner;

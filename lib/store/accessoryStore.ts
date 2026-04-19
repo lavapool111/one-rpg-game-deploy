@@ -4,12 +4,10 @@ import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 import { getStatsForLevel, getXpRequiredForLevel } from "../game/stats";
 import {
-    Inventory,
-    getInitialInventory,
     MaterialItemId,
     ReedStrength,
     REED_MULTIPLIERS,
-    ALL_RECIPES,
+    RECIPE_MAP,
     LigatureInstance,
     LigatureId,
     getLigatureStats,
@@ -36,6 +34,7 @@ import {
     getMeldTierCost,
     MELD_UNLOCK_LEVEL,
 } from "../game/inventory";
+import { calculateIngredientsXp, ACTION_XP_BASE, XP_MULTIPLIERS } from "../game/xp";
 import { GAME_CONFIG } from "../game/config";
 
 // ===== Shared helpers (also used by playerStore) =====
@@ -81,7 +80,7 @@ export function calculateStats(
         health: Math.floor(base.health * caseHealthMultiplier),
         damage: base.damage,
         basicAttackDamage: base.damage,
-        speed: Number((baseSpeed * totalSpeedMultiplier + caseSpeedBonus + permanentSpeedBonus).toFixed(2)),
+        speed: Number(((baseSpeed * totalSpeedMultiplier + caseSpeedBonus) * (1 + permanentSpeedBonus)).toFixed(2)),
         critChance: (stats.crit * slotMultiplier) + embouchureCritBonus,
         superCritChance: ((stats.crit * slotMultiplier) + embouchureCritBonus > 1.0) ? (((stats.crit * slotMultiplier) + embouchureCritBonus) - 1.0) / 10 : 0,
         defense: stats.def * slotMultiplier,
@@ -147,7 +146,7 @@ export interface AccessoryState {
     unequipMouthpiece: () => void;
     craftMouthpiece: (mouthpieceId: MouthpieceId) => boolean;
     upgradeMouthpiece: (mouthpieceIndex: number) => boolean;
-    getMouthpieceBonus: () => { critFactor: number; critChance: number };
+    getMouthpieceBonus: () => { critFactor: number; critChance: number; echoBonus: number };
 
     // Case Actions
     equipCase: (caseIndex: number) => void;
@@ -193,6 +192,7 @@ export interface AccessoryState {
     getNextDungeonUpgradeCost: () => { valves: number; heavyValves: number; timeIncrease: number };
     upgradeDungeonTime: () => boolean;
     version: number;
+    loadState: (saved: any) => void;
 }
 
 // Helper to get playerStore lazily (avoids circular import)
@@ -237,7 +237,8 @@ function updatePlayerStats(stats: Partial<{
     defense: number;
     basicAttackDamage: number;
 }>) {
-    getPlayerStore().setState(stats);
+    const ps = getPlayerStore().getState();
+    getPlayerStore().setState({ ...stats, version: ps.version + 1 });
 }
 
 export const useAccessoryStore = create<AccessoryState>()(
@@ -283,7 +284,8 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             if (!strength) {
                 const caseBonuses = getCurrentCaseBonuses(state);
-                const baseStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const baseStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -318,7 +320,8 @@ export const useAccessoryStore = create<AccessoryState>()(
             }));
 
             const caseBonuses = getCurrentCaseBonuses(state);
-            const newStats = calculateStats(level, strength, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+            const enchantmentBonus = get().getEnchantmentBonus();
+            const newStats = calculateStats(level, strength, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -346,7 +349,8 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             const { level, embouchure, health, maxHealth } = getPlayerStats();
             const caseBonuses = getCurrentCaseBonuses(state);
-            const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+            const enchantmentBonus = get().getEnchantmentBonus();
+            const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -377,7 +381,8 @@ export const useAccessoryStore = create<AccessoryState>()(
                 // Reed broke — auto-unequip
                 const { level, embouchure, health, maxHealth } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
-                const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -420,7 +425,8 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (embouchure > 10) { embouchure = 10; embouchureXp = 0; }
 
                 const caseBonuses = getCurrentCaseBonuses(state);
-                const newStats = calculateStats(ps.level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const newStats = calculateStats(ps.level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -428,13 +434,22 @@ export const useAccessoryStore = create<AccessoryState>()(
                     mpCritBonus = mpStats.critChance * getSlotMultiplier(state.mouthpieceSlot);
                 }
 
-                newCritChance = newStats.critChance + mpCritBonus;
                 const newSuperCritChance = (newCritChance > 1.0) ? (newCritChance - 1.0) / 10 : 0;
-                getPlayerStore().setState({ embouchure, embouchureXp, critChance: newCritChance, superCritChance: newSuperCritChance });
+                getPlayerStore().setState({
+                    embouchure,
+                    embouchureXp,
+                    critChance: newCritChance,
+                    superCritChance: newSuperCritChance,
+                    version: ps.version + 1
+                });
                 return;
             }
 
-            getPlayerStore().setState({ embouchure, embouchureXp });
+            getPlayerStore().setState({
+                embouchure,
+                embouchureXp,
+                version: ps.version + 1
+            });
         },
 
         // ========== LIGATURE ==========
@@ -469,7 +484,7 @@ export const useAccessoryStore = create<AccessoryState>()(
             const ligatureData = getLigatureData(ligatureId);
             if (!ligatureData) return false;
 
-            const recipe = ALL_RECIPES.find(r => r.id === `ligature_${ligatureId}_craft`);
+            const recipe = RECIPE_MAP.get(`ligature_${ligatureId}_craft`);
             if (!recipe) return false;
 
             for (const ing of recipe.ingredients) {
@@ -477,17 +492,21 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (have < ing.quantity) return false;
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
             for (const ing of recipe.ingredients) {
-                newMaterials[ing.itemId as MaterialItemId] = (newMaterials[ing.itemId as MaterialItemId] || 0) - ing.quantity;
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
             const newLigature: LigatureInstance = { id: ligatureId, level: 1 };
             const newLigatures = [...invStore.inventory.ligatures, newLigature];
 
             getInventoryStore().setState({
-                inventory: { ...invStore.inventory, materials: newMaterials, ligatures: newLigatures },
+                inventory: { ...getInventoryStore().getState().inventory, ligatures: newLigatures },
             });
+
+            // Award XP
+            const xpReward = ACTION_XP_BASE.CRAFT_ACCESSORY + calculateIngredientsXp(recipe.ingredients);
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
 
             return true;
         },
@@ -506,12 +525,11 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (have < ing.quantity) return false;
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
             for (const ing of upgradeCost) {
-                newMaterials[ing.itemId as MaterialItemId] = (newMaterials[ing.itemId as MaterialItemId] || 0) - ing.quantity;
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
-            const newLigatures = [...invStore.inventory.ligatures];
+            const newLigatures = [...getInventoryStore().getState().inventory.ligatures];
             newLigatures[ligatureIndex] = { ...ligature, level: nextLevel };
 
             let newEquipped = state.equippedLigature;
@@ -521,8 +539,16 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             set({ equippedLigature: newEquipped, version: get().version + 1 });
             getInventoryStore().setState({
-                inventory: { ...invStore.inventory, materials: newMaterials, ligatures: newLigatures },
+                inventory: { ...getInventoryStore().getState().inventory, ligatures: newLigatures },
             });
+
+            // Award XP
+            const xpReward = ACTION_XP_BASE.UPGRADE_ACCESSORY +
+                (nextLevel * XP_MULTIPLIERS.UPGRADE_LEVEL_FACTOR) +
+                calculateIngredientsXp(upgradeCost);
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
+
             get()._invalidateBonusCaches();
             return true;
         },
@@ -539,7 +565,8 @@ export const useAccessoryStore = create<AccessoryState>()(
             const mouthpieceBonus = getMouthpieceStats(mouthpiece.id, mouthpiece.level);
             const slotMultiplier = getSlotMultiplier(state.mouthpieceSlot);
             const caseBonuses = getCurrentCaseBonuses(state);
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+            const enchantmentBonus = get().getEnchantmentBonus();
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
             const hpRatio = maxHealth > 0 ? health / maxHealth : 1;
             const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
@@ -562,7 +589,8 @@ export const useAccessoryStore = create<AccessoryState>()(
             const state = get();
             const { level, embouchure, health, maxHealth } = getPlayerStats();
             const caseBonuses = getCurrentCaseBonuses(state);
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+            const enchantmentBonus = get().getEnchantmentBonus();
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
             const hpRatio = maxHealth > 0 ? health / maxHealth : 1;
             const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
@@ -590,15 +618,20 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (have < ing.quantity) return false;
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
             for (const ing of mouthpieceData.recipe) {
-                newMaterials[ing.itemId as MaterialItemId] = (newMaterials[ing.itemId as MaterialItemId] || 0) - ing.quantity;
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
             const newMouthpieces = [...invStore.inventory.mouthpieces, { id: mouthpieceId, level: 1 }];
             getInventoryStore().setState({
-                inventory: { ...invStore.inventory, materials: newMaterials, mouthpieces: newMouthpieces },
+                inventory: { ...getInventoryStore().getState().inventory, mouthpieces: newMouthpieces },
             });
+
+            // Award XP
+            const xpReward = ACTION_XP_BASE.CRAFT_ACCESSORY + calculateIngredientsXp(mouthpieceData.recipe);
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
+
             return true;
         },
 
@@ -616,12 +649,11 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (have < ing.quantity) return false;
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
             for (const ing of upgradeCost) {
-                newMaterials[ing.itemId as MaterialItemId] = (newMaterials[ing.itemId as MaterialItemId] || 0) - ing.quantity;
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
-            const newMouthpieces = [...invStore.inventory.mouthpieces];
+            const newMouthpieces = [...getInventoryStore().getState().inventory.mouthpieces];
             newMouthpieces[mouthpieceIndex] = { ...mouthpiece, level: nextLevel };
 
             let newEquipped = state.equippedMouthpiece;
@@ -635,7 +667,8 @@ export const useAccessoryStore = create<AccessoryState>()(
 
                 const { level, embouchure } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
-                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
                 updatePlayerStats({
                     critChance: baseStats.critChance + (mouthpieceBonus.critChance * slotMultiplier),
                     superCritChance: (baseStats.critChance + (mouthpieceBonus.critChance * slotMultiplier) > 1.0) ? (baseStats.critChance + (mouthpieceBonus.critChance * slotMultiplier) - 1.0) / 10 : 0,
@@ -644,18 +677,30 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             set({ equippedMouthpiece: newEquipped, critFactor: newCritFactor, version: get().version + 1 });
             getInventoryStore().setState({
-                inventory: { ...invStore.inventory, materials: newMaterials, mouthpieces: newMouthpieces },
+                inventory: { ...getInventoryStore().getState().inventory, mouthpieces: newMouthpieces },
             });
+
+            // Award XP
+            const xpReward = ACTION_XP_BASE.UPGRADE_ACCESSORY +
+                (nextLevel * XP_MULTIPLIERS.UPGRADE_LEVEL_FACTOR) +
+                calculateIngredientsXp(upgradeCost);
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
+
             get()._invalidateBonusCaches();
             return true;
         },
 
         getMouthpieceBonus: () => {
             const state = get();
-            if (!state.equippedMouthpiece) return { critFactor: 0, critChance: 0 };
+            if (!state.equippedMouthpiece) return { critFactor: 0, critChance: 0, echoBonus: 0 };
             const stats = getMouthpieceStats(state.equippedMouthpiece.id, state.equippedMouthpiece.level);
             const slotMultiplier = getSlotMultiplier(state.mouthpieceSlot);
-            return { critFactor: stats.critFactor * slotMultiplier, critChance: stats.critChance * slotMultiplier };
+            return {
+                critFactor: stats.critFactor * slotMultiplier,
+                critChance: stats.critChance * slotMultiplier,
+                echoBonus: (stats.echoBonus || 0) * slotMultiplier // Apply slot multiplier to echo bonus as well
+            };
         },
 
         // ========== SLOT POSITION ==========
@@ -677,7 +722,8 @@ export const useAccessoryStore = create<AccessoryState>()(
                 const slotMultiplier = getSlotMultiplier(slotIndex);
                 const { level, embouchure } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
-                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
                 set({ critFactor: 1.5 + mouthpieceBonus.critFactor * slotMultiplier });
                 updatePlayerStats({
@@ -696,7 +742,8 @@ export const useAccessoryStore = create<AccessoryState>()(
             if (state.equippedReed) {
                 const { level, embouchure, health, maxHealth } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
-                const newStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(slotIndex), caseBonuses.healthMultiplier, caseBonuses.speedBonus);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const newStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(slotIndex), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -747,7 +794,8 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             const caseBonus = getCaseStats(caseToEquip.id, caseToEquip.level);
             const slotMultiplier = getSlotMultiplier(state.caseSlot);
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot));
+            const enchantmentBonus = get().getEnchantmentBonus();
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), 1, 0, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -777,7 +825,8 @@ export const useAccessoryStore = create<AccessoryState>()(
             if (!state.equippedCase) return;
 
             const { level, embouchure, health, maxHealth } = getPlayerStats();
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot));
+            const enchantmentBonus = get().getEnchantmentBonus();
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), 1, 0, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -812,27 +861,23 @@ export const useAccessoryStore = create<AccessoryState>()(
                 }
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
-            let newEchoes = playerStore.echoes;
-
             for (const ing of caseData.recipe) {
-                if (ing.itemId === 'echoes') {
-                    newEchoes -= ing.quantity;
-                } else {
-                    newMaterials[ing.itemId as MaterialItemId] -= ing.quantity;
-                }
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
-            const newCases = [...invStore.inventory.cases, { id: caseId, level: 1 }];
-            getPlayerStore().setState({ echoes: newEchoes });
+            const newCases = [...getInventoryStore().getState().inventory.cases, { id: caseId, level: 1 }];
             getInventoryStore().setState({
-                echoes: newEchoes,
                 inventory: {
-                    ...invStore.inventory,
-                    materials: { ...newMaterials, echoes: newEchoes },
+                    ...getInventoryStore().getState().inventory,
                     cases: newCases,
                 },
             });
+
+            // Award XP
+            const xpReward = ACTION_XP_BASE.CRAFT_ACCESSORY + calculateIngredientsXp(caseData.recipe);
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
+
             return true;
         },
 
@@ -853,25 +898,19 @@ export const useAccessoryStore = create<AccessoryState>()(
                 }
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
-            let newEchoes = playerStore.echoes;
-
             for (const ing of cost) {
-                if (ing.itemId === 'echoes') {
-                    newEchoes -= ing.quantity;
-                } else {
-                    newMaterials[ing.itemId as MaterialItemId] -= ing.quantity;
-                }
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
-            const newCases = [...invStore.inventory.cases];
+            const newCases = [...getInventoryStore().getState().inventory.cases];
             newCases[caseIndex] = { ...caseToUpgrade, level: caseToUpgrade.level + 1 };
 
             // If equipped, recalculate stats
             if (state.equippedCase?.id === caseToUpgrade.id && state.equippedCase?.level === caseToUpgrade.level) {
                 const caseBonus = getCaseStats(caseToUpgrade.id, caseToUpgrade.level + 1);
                 const slotMultiplier = getSlotMultiplier(state.caseSlot);
-                const baseStats = calculateStats(playerStore.level, state.equippedReed, playerStore.embouchure, getSlotMultiplier(state.reedSlot), caseBonus.healthMultiplier, caseBonus.speedBonus * slotMultiplier);
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const baseStats = calculateStats(playerStore.level, state.equippedReed, playerStore.embouchure, getSlotMultiplier(state.reedSlot), caseBonus.healthMultiplier, caseBonus.speedBonus * slotMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -892,10 +931,8 @@ export const useAccessoryStore = create<AccessoryState>()(
                 });
             }
 
-            getPlayerStore().setState({ echoes: newEchoes });
             getInventoryStore().setState({
-                echoes: newEchoes,
-                inventory: { ...invStore.inventory, materials: { ...newMaterials, echoes: newEchoes }, cases: newCases },
+                inventory: { ...getInventoryStore().getState().inventory, cases: newCases },
             });
 
             get()._invalidateBonusCaches();
@@ -913,13 +950,14 @@ export const useAccessoryStore = create<AccessoryState>()(
         setCaseSlot: (slotIndex) => {
             const state = get();
             if (state.ligatureSlot === slotIndex || state.mouthpieceSlot === slotIndex || state.reedSlot === slotIndex) return;
-            set({ caseSlot: slotIndex, version: get().version + 1 });
+            set({ caseSlot: slotIndex, version: state.version + 1 });
 
             if (state.equippedCase) {
                 const { level, embouchure, health, maxHealth } = getPlayerStats();
                 const caseBonus = getCaseStats(state.equippedCase.id, state.equippedCase.level);
                 const slotMultiplier = getSlotMultiplier(slotIndex);
-                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot));
+                const enchantmentBonus = get().getEnchantmentBonus();
+                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), 1, 0, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -1000,10 +1038,16 @@ export const useAccessoryStore = create<AccessoryState>()(
 
         getMeldBonus: (): MeldStatBonus => {
             const state = get();
+            if (state._cachedMeldBonus) return state._cachedMeldBonus;
+
             if (!state.equippedCase?.meldType || !state.equippedCase?.meldTier) {
-                return { defense: 0, selfHeal: 0, critChance: 0, impact: 0, lifesteal: 0 };
+                const zeroBonus = { defense: 0, selfHeal: 0, critChance: 0, impact: 0, lifesteal: 0 };
+                set({ _cachedMeldBonus: zeroBonus });
+                return zeroBonus;
             }
-            return getMeldStats(state.equippedCase.meldType, state.equippedCase.meldTier);
+            const bonus = getMeldStats(state.equippedCase.meldType, state.equippedCase.meldTier);
+            set({ _cachedMeldBonus: bonus });
+            return bonus;
         },
 
         // ========== ENCHANTMENT ==========
@@ -1020,7 +1064,7 @@ export const useAccessoryStore = create<AccessoryState>()(
             const enchantmentData = getEnchantmentData(enchantmentId, tier);
             if (!enchantmentData) return false;
 
-            const recipe = ALL_RECIPES.find(r => r.id === `enchantment_${enchantmentId}_craft`);
+            const recipe = RECIPE_MAP.get(`enchantment_${enchantmentId}_craft`);
             if (!recipe) return false;
 
             const invStore = getInventoryStore().getState();
@@ -1029,17 +1073,22 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (have < ing.quantity) return false;
             }
 
-            const newMaterials = { ...invStore.inventory.materials };
             for (const ing of recipe.ingredients) {
-                newMaterials[ing.itemId as MaterialItemId] = (newMaterials[ing.itemId as MaterialItemId] || 0) - ing.quantity;
+                invStore.removeMaterial(ing.itemId as MaterialItemId, ing.quantity);
             }
 
             const newEnchantment: EnchantmentInstance = { id: enchantmentId, tier };
             const newEnchantments = [...invStore.inventory.enchantments, newEnchantment];
 
             getInventoryStore().setState({
-                inventory: { ...invStore.inventory, materials: newMaterials, enchantments: newEnchantments },
+                inventory: { ...getInventoryStore().getState().inventory, enchantments: newEnchantments },
             });
+
+            // Award XP
+            const xpReward = calculateIngredientsXp(recipe.ingredients);
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
+
             return true;
         },
 
@@ -1194,18 +1243,48 @@ export const useAccessoryStore = create<AccessoryState>()(
             if (valves < cost.valves || heavyValves < cost.heavyValves) return false;
 
             set({ dungeonTimeBonus: state.dungeonTimeBonus + cost.timeIncrease, version: state.version + 1 });
-            getInventoryStore().setState((invState: any) => ({
-                inventory: {
-                    ...invState.inventory,
-                    materials: {
-                        ...invState.inventory.materials,
-                        valves: invState.inventory.materials.valves - cost.valves,
-                        heavy_valves: invState.inventory.materials.heavy_valves - cost.heavyValves,
-                    },
-                },
-            }));
+            invStore.removeMaterial('valves', cost.valves);
+            invStore.removeMaterial('heavy_valves', cost.heavyValves);
+
+            // Award XP
+            const currentTotal = 20 + state.dungeonTimeBonus;
+            let level = 0;
+            let total = 20;
+            while (total < currentTotal) {
+                level++;
+                total += (total < 108) ? 11 : 12;
+            }
+
+            const xpReward = ACTION_XP_BASE.UPGRADE_DUNGEON_TIME +
+                (level * 25) +
+                calculateIngredientsXp([
+                    { itemId: 'valves', quantity: cost.valves },
+                    { itemId: 'heavy_valves', quantity: cost.heavyValves }
+                ]);
+
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().addXp(xpReward);
+
             return true;
         },
+
+        loadState: (saved: any) => set((state) => ({
+            equippedReed: saved.equippedReed ?? state.equippedReed,
+            reedDurability: saved.reedDurability ?? state.reedDurability,
+            equippedLigature: saved.equippedLigature ?? state.equippedLigature,
+            equippedMouthpiece: saved.equippedMouthpiece ?? state.equippedMouthpiece,
+            equippedCase: saved.equippedCase ?? state.equippedCase,
+            ligatureSlot: saved.ligatureSlot ?? state.ligatureSlot,
+            mouthpieceSlot: saved.mouthpieceSlot ?? state.mouthpieceSlot,
+            caseSlot: saved.caseSlot ?? state.caseSlot,
+            reedSlot: saved.reedSlot ?? state.reedSlot,
+            equippedEnchantments: saved.equippedEnchantments ?? state.equippedEnchantments,
+            enchantmentSlots: saved.enchantmentSlots ?? state.enchantmentSlots,
+            attackCounter: saved.attackCounter ?? state.attackCounter,
+            hasEmpoweringSpeedBonus: saved.hasEmpoweringSpeedBonus ?? state.hasEmpoweringSpeedBonus,
+            dungeonTimeBonus: saved.dungeonTimeBonus ?? state.dungeonTimeBonus,
+            version: state.version + 1,
+        })),
     }))
 );
 

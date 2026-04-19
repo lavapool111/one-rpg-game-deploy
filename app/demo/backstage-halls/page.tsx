@@ -74,6 +74,22 @@ export default function BackstageHallsDemo() {
         setGameState('playing');
     }, [setGameState]);
 
+    const setSimulationActive = useGameStore(state => state.setSimulationActive);
+    const simulationActive = useGameStore(state => state.simulationActive);
+
+    // Staggered simulation activation (matches main page logic)
+    useEffect(() => {
+        if (gameState === 'playing') {
+            let frameIdx = 0;
+            const stagger = () => { frameIdx++; if (frameIdx < 3) requestAnimationFrame(stagger); else setSimulationActive(true); };
+            requestAnimationFrame(stagger);
+        } else {
+            let frameIdx = 0;
+            const stagger = () => { frameIdx++; if (frameIdx < 2) requestAnimationFrame(stagger); else setSimulationActive(false); };
+            requestAnimationFrame(stagger);
+        }
+    }, [gameState, setSimulationActive]);
+
     // Calculate brightness overlay opacity
     const brightnessOverlay = brightness < 50
         ? `rgba(0, 0, 0, ${(50 - brightness) / 50 * 0.6})`
@@ -121,7 +137,7 @@ export default function BackstageHallsDemo() {
                         eyeLevel={1.5}
                         arenaRadius={200}
                         collisionMargin={5}
-                        enabled={gameState === 'playing' && !isMobile && !lastDungeonResult}
+                        enabled={simulationActive && !isMobile && !lastDungeonResult}
                         pillars={[]}
                         pillarCollisionPadding={0}
                         sensitivity={mouseSensitivity}

@@ -1,21 +1,24 @@
 'use client';
 
-import { useRef, useState, useEffect, useMemo, memo, createContext, useContext } from 'react';
+import { useRef, useState, useEffect, useMemo, createContext, useContext, memo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Group, Vector3 } from 'three';
 import * as THREE from 'three';
-import { usePlayerStore, useGameStore, useAccessoryStore, useInventoryStore } from '@/lib/store';
+import { usePlayerStore, useGameStore, useAccessoryStore } from '@/lib/store';
 import { Merged } from '@react-three/drei';
-import { getStatsForLevel, getEnemyHpMultiplier } from '@/lib/game/stats';
+import { getStatsForLevel } from '@/lib/game/stats';
 import { Pillar, checkLineOfSight, getNearbyPillars } from '@/lib/game/pillars';
 import { isValidDungeonPosition } from '@/lib/game/collision';
 import { getFloorHeightAt } from '@/lib/game/stairCollision';
+import { applyOvertonePushback, applyLongToneDamage, updatePoisonDot, PoisonState } from '@/lib/enemies/abilityUtils';
 import { getLigatureStats } from '@/lib/game/inventory';
 import { getSlotMultiplier } from '@/lib/store/playerStore';
 import { EnemyHealthBar } from './EnemyHealthBar';
-import { calculateAbilityDamage, calculateBasicAttackDamage } from '@/lib/game/damageUtils';
-import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight } from '@/lib/game/enemyMovement';
-import { getTubaDrops } from '@/lib/game/enemyDrops';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { getTubaDrops } from '@/lib/enemies/enemyDrops';
+import { useEnemyState } from '@/lib/enemies/useEnemyState';
+import { roundToTenths, processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
+import { hitboxMat, silverMat } from '@/lib/enemies/enemyMaterials';
 
 // Global counter to limit concurrent tuba initializations
 let tubaInitCounter = 0;
@@ -50,28 +53,17 @@ const CRASH_DAMAGE_SCALE = 15.0;
 const SIGHT_RANGE_ARENA = 140;
 const SIGHT_RANGE_DUNGEON = 40; // Reduced for dungeon to prevent wall-hacks
 
-function roundToTenths(value: number): number {
-    return Math.round(value * 10) / 10;
-}
+
 
 /**
  * Calculate Tuba stats for a given level
  * Uses same base stats as player from getStatsForLevel(), then applies enemy multipliers
  */
 function getTubaStats(level: number) {
-    const baseStats = getStatsForLevel(level);
-
-    // Health: base stats * 15x enemy multiplier * HP scaling
-    const hpMultiplier = getEnemyHpMultiplier(level);
-    const health = roundToTenths(baseStats.health * 15 * hpMultiplier);
-
-    // XP: 5x Trumpet base XP
-    const xp = (1 + (level - 1) * 0.1) * 5;
-
-    // Speed
+    const health = calculateEnemyHealth(level, 15); // 15x base health
     const speed = BASE_SPEED + (level - 1) * SPEED_PER_LEVEL;
 
-    return { health, xp, speed };
+    return { health, speed };
 }
 
 interface TubaProps {
@@ -129,14 +121,7 @@ const bellMat = new THREE.MeshStandardMaterial({
     emissiveIntensity: 0.05
 });
 
-const silverMat = new THREE.MeshStandardMaterial({
-    color: '#C0C0C0'
-});
 
-const hitboxMat = new THREE.MeshBasicMaterial({
-    transparent: true,
-    opacity: 0
-});
 
 export const TubaContext = createContext<any>(null);
 
@@ -171,65 +156,41 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
 
     const groupRef = useRef<Group>(null);
     const { camera } = useThree();
-    const healthBarRef = useRef<THREE.Group>(null);
-    const gameState = useGameStore((state) => state.gameState);
     const currentLocation = useGameStore((state) => state.currentLocation);
 
     const stats = getTubaStats(level);
     const MAX_HEALTH = stats.health;
-    const XP_REWARD = stats.xp;
     const MOVE_SPEED = stats.speed;
 
+    const {
+        healthRef, currentHealth, setCurrentHealth,
+        isAlive, setIsAlive,
+        lastTickTime, lastAttackTime, rewardGranted, poisonState,
+        isLongToneActive, playerDamage, basicAttackDamage, playerTakeDamage,
+        simulationActive, gameState,
+        damageNumberRef,
+        enemyPos, playerPos, direction, playerDistanceRef,
+        frameCounter, accumulatedDelta, unitScale,
+        isAttacking, setIsAttacking,
+        wanderDirection, lastWanderChange
+    } = useEnemyState(initialPosition, MAX_HEALTH);
+
     const [initialHealth] = useState(MAX_HEALTH);
-    const healthRef = useRef(MAX_HEALTH);
-    const [currentHealth, setCurrentHealth] = useState(MAX_HEALTH);
-    const [isAlive, setIsAlive] = useState(true);
-    const rewardGranted = useRef(false);
     const [isReady, setIsReady] = useState(false);
 
-    // Attack state
-    const lastAttackTime = useRef(0);
-    const [isAttacking, setIsAttacking] = useState(false);
-
-    // Store access - use selective subscriptions to avoid mass re-renders
-    const basicAttackDamage = usePlayerStore((state) => state.basicAttackDamage);
-    const playerTakeDamage = usePlayerStore((state) => state.takeDamage);
     const playerApplySlow = usePlayerStore((state) => state.applySlow);
-    const isLongToneActive = usePlayerStore((state) => state.isLongToneActive);
-    const playerDamage = usePlayerStore((state) => state.damage);
 
-    // Vectors
-    const enemyPos = useRef(new Vector3(...initialPosition));
+    // Tuba-specific vectors and flags
     const worldSpawnPos = useRef(new Vector3(...initialPosition)); // Actual world spawn position
-    const playerPos = useRef(new Vector3());
-    const direction = useRef(new Vector3());
-    const playerDistanceRef = useRef(0); // For health bar visibility
-    const frameCounter = useRef(0); // For tiered frame skip
-    const accumulatedDelta = useRef(0);
     const worldPosReady = useRef(false); // Track if world position was successfully captured
     const fallbackAttempted = useRef(false); // Prevent repeated fallback attempts
-
-    // Wander state (when not aggroed)
-    const wanderDirection = useRef(new Vector3(Math.random() - 0.5, 0, Math.random() - 0.5).normalize());
-    const lastWanderChange = useRef(0);
     const WANDER_CHANGE_INTERVAL = 4 + Math.random() * 3; // Tubas wander slower
-
-    // Damage visuals - use refs to avoid re-renders
-    const damageNumberRef = useRef<{ value: number, time: number, type?: 'normal' | 'crit' | 'superCrit' } | null>(null);
 
     // DOM refs for direct health bar manipulation (avoids React re-renders)
     const healthBarFillRef = useRef<HTMLDivElement>(null);
     const damageTextRef = useRef<HTMLDivElement>(null);
     const activePillarsRef = useRef<Pillar[]>(pillars);
-
-    // Ability damage refs
-    const lastTickTime = useRef(0);
     const BASE_TICK_RATE = 0.5;
-    const poisonState = useRef<{ isActive: boolean; endTime: number; damagePerSecond: number }>({
-        isActive: false,
-        endTime: 0,
-        damagePerSecond: 0
-    });
 
     // Fade in to prevent ghosting - minimal delay (1 frame)
     // Also capture actual world spawn position (only needed for confined Tubas)
@@ -327,6 +288,7 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
             if (!didDecrement) {
                 tubaInitCounter = Math.max(0, tubaInitCounter - 1);
             }
+            unregisterEnemyPosition(id);
         };
     }, [maxRangeFromSpawn, id]);
 
@@ -360,7 +322,7 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
         const cappedDelta = Math.min(delta, 0.1);
 
         // IMPORTANT: Must check isReady to ensure world spawn position has been captured
-        if (!groupRef.current || !isAlive || !isReady || gameState !== 'playing') {
+        if (!groupRef.current || !isAlive || !isReady || !simulationActive) {
             // Fallback: Try to initialize ready state if not ready and we have a groupRef
             // BUT: Limit attempts to prevent performance issues
             if (!isReady && groupRef.current && maxRangeFromSpawn !== undefined && !fallbackAttempted.current) {
@@ -399,26 +361,9 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
         camera.getWorldPosition(playerPos.current);
         const isConfined = maxRangeFromSpawn !== undefined;
 
-        // --- Overtone Stun Logic ---
-        if (stateObj.lastOvertoneCastTime > lastHitByOvertone.current) {
-            lastHitByOvertone.current = stateObj.lastOvertoneCastTime;
-            const pPos = new Vector3(...stateObj.position);
-            // Confined Tubas calculate distance differently later, but for stun, raw distance is fine
-            if (pPos.distanceTo(enemyPos.current) <= 10.0) {
-                overtoneStunEndTime.current = Date.now() + 2000;
-            }
-        }
-
-        const isStunnedByOvertone = Date.now() < overtoneStunEndTime.current;
-        if (isStunnedByOvertone) {
-            const gameStoreState = useGameStore.getState();
-            const currentLocation = gameStoreState.currentLocation;
-            const floorY = getFloorHeightAt(enemyPos.current.x, enemyPos.current.z, enemyPos.current.y, 1.5, currentLocation);
-            enemyPos.current.y = floorY + 1.5;
-            if (!isConfined) {
-                groupRef.current?.position.copy(enemyPos.current);
-            }
-            playerPos.current.fromArray(stateObj.position);
+        // --- Overtone Shield Pushback Logic ---
+        if (applyOvertonePushback(enemyPos.current, groupRef.current, 1.5 * 2, cappedDelta)) {
+            playerPos.current.fromArray(usePlayerStore.getState().position);
             return;
         }
 
@@ -452,10 +397,6 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
         // Determine sight range based on location
         const effectiveSightRange = currentLocation === 'backstage_halls' ? SIGHT_RANGE_DUNGEON : SIGHT_RANGE_ARENA;
         const canSeePlayer = distanceToPlayer <= effectiveSightRange && (currentLocation !== 'backstage_halls' || hasZoneLOS);
-
-        if (healthBarRef.current) {
-            healthBarRef.current.visible = healthRef.current < MAX_HEALTH || canSeePlayer;
-        }
 
         // Update damage number visibility via DOM ref
         if (damageTextRef.current) {
@@ -643,6 +584,8 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
                 }
             }
 
+            applySeparation(id, enemyPos.current, 'tuba');
+            registerEnemyPosition(id, enemyPos.current.x, enemyPos.current.z, 'tuba', takeDamage);
             groupRef.current.position.copy(enemyPos.current);
 
             // Rotation
@@ -699,6 +642,8 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
                 }
             }
 
+            applySeparation(id, enemyPos.current, 'tuba');
+            registerEnemyPosition(id, enemyPos.current.x, enemyPos.current.z, 'tuba');
             groupRef.current.position.copy(enemyPos.current);
 
             // Face wander direction
@@ -708,80 +653,19 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
             }
         }
 
-        // --- INCOMING DAMAGE (Long Tone) ---
-        if (isLongToneActive || poisonState.current.isActive) {
-            const now = state.clock.elapsedTime;
-
-            // Handle Poison DOT (applies even if Long Tone is not active)
-            if (poisonState.current.isActive) {
-                // Calculate effective tick rate with tickSpeedBonus (Tier 2 stat)
-                const playerState = usePlayerStore.getState();
-                const abilityStats = playerState.getAbilityUpgradeStats();
-                const tickSpeedMultiplier = 1 + (abilityStats.tickSpeedBonus || 0);
-                const effectiveTickRate = BASE_TICK_RATE / tickSpeedMultiplier;
-
-                if (now >= poisonState.current.endTime) {
-                    // Poison expired
-                    poisonState.current.isActive = false;
-                } else if (now - lastTickTime.current >= effectiveTickRate) {
-                    // Apply poison DOT damage
-                    const dotDamage = poisonState.current.damagePerSecond * effectiveTickRate;
-                    if (dotDamage > 0) {
-                        takeDamage(dotDamage);
-                        lastTickTime.current = now;
-                    }
-                }
-            }
-
-            // Handle Long Tone damage
-            if (isLongToneActive) {
-                // Calculate effective tick rate with tickSpeedBonus (Tier 2 stat)
-                const playerState = usePlayerStore.getState();
-                const abilityStats = playerState.getAbilityUpgradeStats();
-                const tickSpeedMultiplier = 1 + (abilityStats.tickSpeedBonus || 0);
-                const effectiveTickRate = BASE_TICK_RATE / tickSpeedMultiplier;
-
-                if (now - lastTickTime.current >= effectiveTickRate) {
-                    const dist = effectivePos.distanceTo(playerPos.current);
-
-                    const baseRange = 20; // Base 20 feet range
-                    const effectiveRange = baseRange + (abilityStats.rangeBonus || 0);
-
-                    if (dist < effectiveRange) {
-                        const hasLOS = activePillars.length === 0 || checkLineOfSight(
-                            { x: playerPos.current.x, z: playerPos.current.z },
-                            { x: effectivePos.x, z: effectivePos.z },
-                            activePillars
-                        );
-
-                        if (hasLOS) {
-                            const playerDamage = playerState.damage;
-                            const { damage: rawDamage, type: dmgType } = calculateAbilityDamage(playerDamage, abilityStats);
-                            const finalDamage = Math.max(0, rawDamage);
-
-                            if (finalDamage > 0) {
-                                takeDamage(finalDamage, dmgType);
-                                lastTickTime.current = now;
-
-                                // Apply Poison DOT if player has poison upgrades
-                                if (abilityStats.dotDamagePerSecond > 0 && abilityStats.dotDuration > 0) {
-                                    poisonState.current = {
-                                        isActive: true,
-                                        endTime: now + abilityStats.dotDuration,
-                                        damagePerSecond: abilityStats.dotDamagePerSecond * playerDamage * 0.15
-                                    };
-                                }
-
-                                // Brass Essence drop (2% chance per enemy hit by ability damage)
-                                if (Math.random() < 0.02) {
-                                    useInventoryStore.getState().addMaterial('brass_essence', 1);
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        // --- INCOMING DAMAGE (Long Tone & Poison) ---
+        updatePoisonDot(currentTime, poisonState, lastTickTime, takeDamage);
+        applyLongToneDamage(
+            effectivePos,
+            playerPos.current,
+            isLongToneActive,
+            lastTickTime,
+            currentTime,
+            takeDamage,
+            poisonState,
+            activePillars,
+            direction.current
+        );
 
         // Attack Animation (Jump/Slam visual)
         if (isAttacking) {
@@ -803,44 +687,20 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
         if (rewardGranted.current) return;
         rewardGranted.current = true;
         setIsAlive(false);
-        const playerStore = usePlayerStore.getState();
-        let one = 5
-        if (id.includes('wave-')) {
-            if (id.includes('wave-enemy-1')) {
-                one *= 1.5
-            } else if (id.includes('wave-enemy-2')) {
-                one *= 2
-            } else if (id.includes('wave-enemy-3')) {
-                one *= 3
-            } else if (id.includes('wave-enemy-4')) {
-                one *= 4
-            } else if (id.includes('wave-enemy-5')) {
-                one *= 5
-            }
-        }
-        playerStore.registerKill(level, one); // Tuba gives 5x XP
-        useAccessoryStore.getState().addEmbouchureXp(100);
-
-        const currentLocation = useGameStore.getState().currentLocation;
-
-        if (currentLocation === 'backstage_halls') {
-            useGameStore.getState().collectGold(Math.floor(5 * (1 + level / 100)))
-        }
-
-        const drops = getTubaDrops(level, currentLocation);
-
-        if (Object.keys(drops).length > 0) {
-            if (drops.echoes) { playerStore.collectEchoes(drops.echoes); delete drops.echoes; }
-            if (Object.keys(drops).length > 0) useInventoryStore.getState().addMaterials(drops);
-        }
-
-        onDeath?.(id);
+        processEnemyDeath({
+            id,
+            level,
+            baseXpMultiplier: 5,
+            embouchureXp: 100,
+            goldFormula: (lvl) => Math.floor(5 * (1 + lvl / 100)),
+            getDrops: getTubaDrops,
+            onDeath,
+        });
     };
 
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
         const newHealth = Math.max(0, healthRef.current - amount);
         healthRef.current = newHealth;
-        setCurrentHealth(newHealth);
         damageNumberRef.current = { value: Number(amount.toFixed(2)), time: Date.now(), type };
 
         if (newHealth <= 0 && isAlive) {
@@ -848,106 +708,69 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
         }
     };
 
-    if (!isAlive || !isReady) return null;
+    if (!isReady) return null;
 
     return (
         <group ref={groupRef} position={initialPosition}>
-            {/* Visual Object Wrapper to center the model visually */}
-            <group position={[0, 0, 0]}>
-                {/* Main vertical tube (Body) */}
-                {models ? <models.body position={[0, 2, 0]} /> : <mesh position={[0, 2, 0]} geometry={bodyGeo} material={brassMat} />}
+            {isAlive && isReady && (
+                <group>
+                    {/* Visual Object Wrapper to center the model visually */}
+                    <group position={[0, 0, 0]}>
+                        {/* Main vertical tube (Body) */}
+                        {models ? <models.body position={[0, 2, 0]} /> : <mesh position={[0, 2, 0]} geometry={bodyGeo} material={brassMat} />}
 
-                {/* Bottom U-Bend */}
-                {models ? <models.uBend position={[0.7, 0.4, 0]} rotation={[0, 0, Math.PI / 2]} /> : <mesh position={[0.7, 0.4, 0]} rotation={[0, 0, Math.PI / 2]} geometry={uBendGeo} material={uBendMat} />}
+                        {/* Bottom U-Bend */}
+                        {models ? <models.uBend position={[0.7, 0.4, 0]} rotation={[0, 0, Math.PI / 2]} /> : <mesh position={[0.7, 0.4, 0]} rotation={[0, 0, Math.PI / 2]} geometry={uBendGeo} material={uBendMat} />}
 
-                {/* Second vertical tube (up to bell) */}
-                {models ? <models.secondTube position={[1.4, 2.5, 0]} /> : <mesh position={[1.4, 2.5, 0]} geometry={secondTubeGeo} material={secondTubeMat} />}
+                        {/* Second vertical tube (up to bell) */}
+                        {models ? <models.secondTube position={[1.4, 2.5, 0]} /> : <mesh position={[1.4, 2.5, 0]} geometry={secondTubeGeo} material={secondTubeMat} />}
 
-                {/* The Bell */}
-                {models ? <models.bell position={[1.4, 5.5, 0]} /> : <mesh position={[1.4, 5.5, 0]} geometry={bellGeo} material={bellMat} />}
+                        {/* The Bell */}
+                        {models ? <models.bell position={[1.4, 5.5, 0]} /> : <mesh position={[1.4, 5.5, 0]} geometry={bellGeo} material={bellMat} />}
 
-                {/* Mouthpiece tube */}
-                {models ? <models.mouthpiece position={[-0.8, 3, 0]} rotation={[0, 0, Math.PI / 4]} /> : <mesh position={[-0.8, 3, 0]} rotation={[0, 0, Math.PI / 4]} geometry={mouthpieceGeo} material={silverMat} />}
+                        {/* Mouthpiece tube */}
+                        {models ? <models.mouthpiece position={[-0.8, 3, 0]} rotation={[0, 0, Math.PI / 4]} /> : <mesh position={[-0.8, 3, 0]} rotation={[0, 0, Math.PI / 4]} geometry={mouthpieceGeo} material={silverMat} />}
 
-                {/* Valves (3 Pistons) */}
-                <group position={[0.4, 2, 0.8]}>
-                    {models ? <models.valve position={[-0.3, 0, 0]} /> : <mesh position={[-0.3, 0, 0]} geometry={valveGeo} material={silverMat} />}
-                    {models ? <models.valve position={[0, 0, 0]} /> : <mesh position={[0, 0, 0]} geometry={valveGeo} material={silverMat} />}
-                    {models ? <models.valve position={[0.3, 0, 0]} /> : <mesh position={[0.3, 0, 0]} geometry={valveGeo} material={silverMat} />}
-                </group>
+                        {/* Valves (3 Pistons) */}
+                        <group position={[0.4, 2, 0.8]}>
+                            {models ? <models.valve position={[-0.3, 0, 0]} /> : <mesh position={[-0.3, 0, 0]} geometry={valveGeo} material={silverMat} />}
+                            {models ? <models.valve position={[0, 0, 0]} /> : <mesh position={[0, 0, 0]} geometry={valveGeo} material={silverMat} />}
+                            {models ? <models.valve position={[0.3, 0, 0]} /> : <mesh position={[0.3, 0, 0]} geometry={valveGeo} material={silverMat} />}
+                        </group>
 
-                {/* Coils/Wrap around */}
-                {models ? <models.coil position={[0, 1.5, 0]} rotation={[Math.PI / 2, 0, 0]} /> : <mesh position={[0, 1.5, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={coilGeo} material={brassMat} />}
-            </group>
+                        {/* Coils/Wrap around */}
+                        {models ? <models.coil position={[0, 1.5, 0]} rotation={[Math.PI / 2, 0, 0]} /> : <mesh position={[0, 1.5, 0]} rotation={[Math.PI / 2, 0, 0]} geometry={coilGeo} material={brassMat} />}
+                    </group>
 
-            {/* Visual Hitbox/Click area */}
-            <mesh
-                onClick={(e) => {
-                    e.stopPropagation();
-                    // For confined Tubas, use worldSpawnPos (actual world position)
-                    // For normal Tubas, use enemyPos (which tracks movement)
-                    const effectivePos = maxRangeFromSpawn !== undefined ? worldSpawnPos.current : enemyPos.current;
-                    const dist = effectivePos.distanceTo(playerPos.current);
-                    if (dist > 30) return;
-
-                    // Prepare pillars for click check (same as update loop)
-                    let activePillars = pillars;
-                    if (localPillars.length > 0) {
-                        const offsetX = worldSpawnPos.current.x - initialPosition[0];
-                        const offsetZ = worldSpawnPos.current.z - initialPosition[2];
-                        const worldLocalPillars = localPillars.map(p => ({
-                            ...p,
-                            x: p.x + offsetX,
-                            z: p.z + offsetZ
-                        }));
-                        activePillars = [...pillars, ...worldLocalPillars];
-                    }
-
-                    const hasLOS = activePillars.length === 0 || checkLineOfSight(
-                        { x: playerPos.current.x, z: playerPos.current.z },
-                        { x: effectivePos.x, z: effectivePos.z },
-                        activePillars
-                    );
-                    if (hasLOS) {
-                        // NERF: Basic attack deals 50% damage
-                        // Calculate ligature bonus damage against Tuba
-                        let ligatureBonus = 0;
-                        const { equippedLigature, ligatureSlot } = useAccessoryStore.getState();
-                        if (equippedLigature) {
-                            const stats = getLigatureStats(equippedLigature.id, equippedLigature.level);
-                            const slotMult = getSlotMultiplier(ligatureSlot);
-                            ligatureBonus = stats.tubaDamageBonus * slotMult;
-                        }
-
-                        // Apply bonuses as multipliers (ligature bonus multiplicative)
-                        const { damage: dmg, type: dmgType, isCrit, isSuperCrit } = calculateBasicAttackDamage(
-                            basicAttackDamage,
-                            1 + ligatureBonus
-                        );
-                        if (isCrit) console.log(isSuperCrit ? "SUPER-CRITICAL HIT on Tuba!" : "CRITICAL HIT on Tuba!");
-                        takeDamage(dmg, dmgType);
-                    }
-                }}
-                visible={false}
-                geometry={hitboxGeo}
-                material={hitboxMat}
-            />
-
-            {/* Health Bar */}
-            {gameState === 'playing' && (
-                <group position={[0, BODY_HEIGHT + 2.5, 0]} ref={healthBarRef}>
-                    <EnemyHealthBar
-                        health={currentHealth}
-                        maxHealth={MAX_HEALTH}
-                        level={level}
-                        visible={currentHealth < MAX_HEALTH || playerDistanceRef.current <= (currentLocation === 'backstage_halls' ? SIGHT_RANGE_DUNGEON : SIGHT_RANGE_ARENA)}
-                        enemyType="tuba"
-                        damageTextValue={damageNumberRef.current?.value}
-                        damageTextTime={damageNumberRef.current?.time}
-                        damageTextType={damageNumberRef.current?.type}
+                    {/* Visual Hitbox/Click area */}
+                    <mesh
+                        ref={(m) => {
+                            if (m) {
+                                m.userData.onHit = (dmg: number, type: any) => takeDamage(dmg, type);
+                                m.userData.type = 'enemy';
+                                m.userData.enemyType = 'tuba';
+                                m.userData.id = id;
+                            }
+                        }}
+                        visible={true}
+                        geometry={hitboxGeo}
+                        material={hitboxMat}
                     />
                 </group>
             )}
+
+            {/* Health Bar */}
+            <EnemyHealthBar
+                healthRef={healthRef}
+                maxHealth={MAX_HEALTH}
+                level={level}
+                playerDistanceRef={playerDistanceRef}
+                enemyType="tuba"
+                damageTextRef={damageNumberRef}
+                enemyPosRef={enemyPos}
+                yOffset={7.5}
+                visible={gameState === 'playing' && isAlive && isReady}
+            />
         </group>
     );
 });

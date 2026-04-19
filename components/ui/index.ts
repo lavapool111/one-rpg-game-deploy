@@ -21,6 +21,14 @@ Inventory:
 - AbilityUpgradeSubTab.tsx
 - EnchantmentScreen.tsx
 
+Inventory Sub-components:
+
+- InventorySlot.tsx
+- InventoryTabSystem.tsx
+- RecipeCard.tsx
+- DungeonTimeUpgradeCard.tsx
+- UpgradeCard.tsx
+- EquippedItemSummary.tsx
 
 HUDs:
 
@@ -34,7 +42,14 @@ Menus:
 
 - MainMenu.tsx
 - PauseMenu.tsx
--
+
+
+Introductory Screens:
+
+- ClassSelectScreen.tsx
+- IntroScreen.tsx
+- HowToPlayModal.tsx
+
 
 
 

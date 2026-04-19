@@ -4,35 +4,26 @@ import { Canvas } from '@react-three/fiber';
 import { Stats } from '@react-three/drei';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
 import { BandRoom, FirstPersonController, Player, useFirstPersonController, SaveManager, TouchControls } from '@/components/game/everything';
-import { BackstageHalls } from '@/components/backstage-halls/backstage';
-import { AltarRoom } from '@/components/game/AltarRoom';
-import { EnemySpawner, CorridorSpawner, AltarRoomWaveSpawner } from '@/components/enemies/everything';
+import { AltarManager } from '@/components/game/AltarManager';
+import { OuterBackstage } from '@/components/game/OuterBackstage';
+import { EnemySpawner, CorridorSpawner } from '@/components/enemies/everything';
+import { OuterBackstageSpawner } from '@/components/enemies/OuterBackstageSpawner';
+import { BackstageHalls } from '@/components/backstage-halls/BackstageHalls';
+import { TrumpetInstances } from '@/components/enemies/Trumpet';
+import { TromboneInstances } from '@/components/enemies/Trombone';
+import { FrenchHornInstances } from '@/components/enemies/FrenchHorn';
+import { TubaInstances } from '@/components/enemies/Tuba';
+import { EuphoniumInstances } from '@/components/enemies/Euphonium';
+import { EnemyHealthBarInstances } from '@/components/enemies/EnemyHealthBar';
+import { RegistryManager } from '@/components/enemies/RegistryManager';
 import { GameUI } from '@/components/ui';
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
 import { generatePillars } from '@/lib/game/pillars';
 import { useAudioSettings } from '@/hooks/useAudioSettings';
+import AudioManager from '@/lib/audio/AudioManager';
 
 import { getFloorHeightAt } from '@/lib/game/stairCollision';
 
-function DebugObstacles() {
-    const [altarHeight, setAltarHeight] = useState(0);
-
-    useEffect(() => {
-        const interval = setInterval(() => {
-            const pos = usePlayerStore.getState().position;
-            if (pos) {
-                setAltarHeight(getFloorHeightAt(pos[0], pos[2], pos[1], 0.3, 'band_room'));
-            }
-        }, 100);
-        return () => clearInterval(interval);
-    }, []);
-
-    return (
-        <div className="absolute top-20 left-4 z-[100] bg-black/80 text-white p-2 text-xs font-mono pointer-events-none">
-            <div className="text-xl text-yellow-300">Live Altar Surface Y: {altarHeight}</div>
-        </div>
-    );
-}
 
 /**
  * Band Room Demo Page
@@ -91,13 +82,60 @@ export default function BandRoomDemo() {
         setGameState('menu');
     }, [setGameState]);
 
+    const setSimulationActive = useGameStore(state => state.setSimulationActive);
+    const simulationActive = useGameStore(state => state.simulationActive);
+
+    // Staggered simulation activation (matches main page logic)
+    useEffect(() => {
+        if (gameState === 'playing') {
+            let frameIdx = 0;
+            const stagger = () => { frameIdx++; if (frameIdx < 3) requestAnimationFrame(stagger); else setSimulationActive(true); };
+            requestAnimationFrame(stagger);
+        } else {
+            let frameIdx = 0;
+            const stagger = () => { frameIdx++; if (frameIdx < 2) requestAnimationFrame(stagger); else setSimulationActive(false); };
+            requestAnimationFrame(stagger);
+        }
+    }, [gameState, setSimulationActive]);
+
     // Calculate brightness overlay opacity (brightness 50 = no overlay, <50 = darken, >50 = lighten)
     const brightnessOverlay = brightness < 50
         ? `rgba(0, 0, 0, ${(50 - brightness) / 50 * 0.6})` // Darken up to 60%
         : `rgba(255, 255, 255, ${(brightness - 50) / 50 * 0.3})`; // Lighten up to 30%
 
     // Determine which arena radius to use based on location
-    const activeArenaRadius = currentLocation === 'backstage_halls' ? 200 : ARENA_RADIUS;
+    const activeArenaRadius = currentLocation === 'backstage_halls' ? 350 : ARENA_RADIUS;
+
+    // Audio: Background Ambience
+    const isInAltarRoom = useGameStore(state => state.isInAltarRoom);
+    const isGameActive = gameState === 'playing' || gameState === 'paused';
+
+    useEffect(() => {
+        if (!isGameActive || currentLocation !== 'band_room') return;
+
+        const ALTAR_MUSIC_KEY = 'altar-ambience';
+        const ALTAR_MUSIC_SRC = '/audio/Altar of the Silent Oath.mp3';
+        const HUB_MUSIC_KEY = 'bg-ambience';
+        const HUB_MUSIC_SRC = '/audio/ambient-music.m4a';
+
+        const currentKey = isInAltarRoom ? ALTAR_MUSIC_KEY : HUB_MUSIC_KEY;
+        const currentPath = isInAltarRoom ? ALTAR_MUSIC_SRC : HUB_MUSIC_SRC;
+        const otherKey = isInAltarRoom ? HUB_MUSIC_KEY : ALTAR_MUSIC_KEY;
+
+        AudioManager.stop(otherKey);
+        AudioManager.stop(currentKey);
+
+        AudioManager.load(currentKey, currentPath);
+        const id = AudioManager.play(currentKey, 'music', {
+            loop: true,
+            volume: isInAltarRoom ? 0.40 : 0.30
+        });
+
+        return () => {
+            if (id) AudioManager.stop(currentKey, id);
+            AudioManager.stop(currentKey);
+        };
+    }, [isGameActive, isInAltarRoom, currentLocation]);
 
     return (
         <div className="w-full h-screen bg-black select-none">
@@ -112,7 +150,6 @@ export default function BandRoomDemo() {
             {/* Game UI Manager (HUD, Menus, Death Screen) */}
             <GameUI />
 
-            <DebugObstacles />
 
             {/* Mobile Touch Controls */}
             {gameState === 'playing' && isMobile && (
@@ -143,62 +180,80 @@ export default function BandRoomDemo() {
                 className="w-full h-full touch-none"
             >
                 <Suspense fallback={null}>
-                    <FirstPersonController
-                        speed={gameState === 'playing' ? speed : 0}
-                        eyeLevel={1.5}
-                        arenaRadius={activeArenaRadius}
-                        collisionMargin={5}
-                        enabled={gameState === 'playing' && !isMobile && !lastDungeonResult}
-                        pillars={currentLocation === 'band_room' ? pillarConfig.pillars : []}
-                        pillarCollisionPadding={currentLocation === 'band_room' ? pillarConfig.collisionPadding : 0}
-                        sensitivity={mouseSensitivity}
-                    />
+                    {/* Global Mesh Instance Pools */}
+                    <TrumpetInstances>
+                        <TromboneInstances>
+                            <FrenchHornInstances>
+                                <TubaInstances>
+                                    <EuphoniumInstances>
+                                        <EnemyHealthBarInstances>
+                                            <RegistryManager />
+                                            <FirstPersonController
+                                                speed={gameState === 'playing' ? speed : 0}
+                                                eyeLevel={1.5}
+                                                arenaRadius={activeArenaRadius}
+                                                collisionMargin={5}
+                                                enabled={simulationActive && !isMobile && !lastDungeonResult}
+                                                pillars={currentLocation === 'band_room' ? pillarConfig.pillars : []}
+                                                pillarCollisionPadding={currentLocation === 'band_room' ? pillarConfig.collisionPadding : 0}
+                                                sensitivity={mouseSensitivity}
+                                            />
 
-                    {/* Player weapon/character (follows camera) - only visible when locked/playing */}
-                    <Player visible={gameState === 'playing'} />
+                                            {/* Player weapon/character (follows camera) - only visible when locked/playing */}
+                                            <Player visible={gameState === 'playing'} />
 
-                    {/* Band Room - Only render when in band_room */}
-                    {currentLocation === 'band_room' && (
-                        <>
-                            <BandRoom
-                                radius={ARENA_RADIUS}
-                                wallHeight={50}
-                                animatedLights={quality === 'high'}
-                                quality={quality}
-                            >
-                                {/* Altar Room behind north corridor */}
-                                <AltarRoom />
-                                {/* Manage Altar Room Enemy Waves */}
-                                {gameState === 'playing' && <AltarRoomWaveSpawner />}
-                            </BandRoom>
+                                            {/* Band Room - Only render when in band_room */}
+                                            {currentLocation === 'band_room' && !isInAltarRoom && (
+                                                <>
+                                                    <BandRoom
+                                                        radius={ARENA_RADIUS}
+                                                        wallHeight={50}
+                                                        animatedLights={quality === 'high'}
+                                                        quality={quality}
+                                                    />
 
-                            {/* Enemy Spawner - 5 Trumpets every 60 seconds */}
-                            <EnemySpawner
-                                arenaRadius={ARENA_RADIUS}
-                                enemiesPerWave={5}
-                                spawnInterval={60}
-                                enabled={gameState === 'playing'}
-                                pillars={pillarConfig.pillars}
-                            />
+                                                    {/* Enemy Spawner - 5 Trumpets every 60 seconds */}
+                                                    <EnemySpawner
+                                                        arenaRadius={ARENA_RADIUS}
+                                                        enemiesPerWave={5}
+                                                        spawnInterval={60}
+                                                        enabled={simulationActive}
+                                                        pillars={pillarConfig.pillars}
+                                                    />
 
-                            {/* Corridor Enemy Spawner */}
-                            <CorridorSpawner
-                                arenaRadius={ARENA_RADIUS}
-                                enabled={gameState === 'playing'}
-                                pillars={pillarConfig.pillars}
-                            />
+                                                    {/* Corridor Enemy Spawner */}
+                                                    <CorridorSpawner
+                                                        arenaRadius={ARENA_RADIUS}
+                                                        enabled={simulationActive}
+                                                        pillars={pillarConfig.pillars}
+                                                    />
 
-                            {/* Fog for Band Room atmosphere - scaled up for 375m radius */}
-                            <fog attach="fog" args={['#1a1a2e', 150, 600]} />
-                        </>
-                    )}
+                                                    {/* Outer Backstage Ring */}
+                                                    <OuterBackstage />
+                                                    <OuterBackstageSpawner enabled={simulationActive} />
 
-                    {/* Backstage Halls - Only render when in backstage_halls */}
-                    {currentLocation === 'backstage_halls' && (
-                        <BackstageHalls
-                            quality={quality}
-                        />
-                    )}
+                                                    {/* Fog for Band Room atmosphere - increased far plane for wall visibility */}
+                                                    <fog attach="fog" args={['#1a1a2e', 100, 800]} />
+                                                </>
+                                            )}
+
+                                            {/* Altar Room Manager - Always render when in band_room to allow corridor-to-room transitions */}
+                                            {currentLocation === 'band_room' && (
+                                                <AltarManager />
+                                            )}
+
+                                            {/* Backstage Halls - Only render when in backstage_halls */}
+                                            {currentLocation === 'backstage_halls' && (
+                                                <BackstageHalls
+                                                    quality={quality}
+                                                />
+                                            )}
+                                        </EnemyHealthBarInstances>
+                                    </EuphoniumInstances>
+                                </TubaInstances>
+                            </FrenchHornInstances>
+                        </TromboneInstances>
+                    </TrumpetInstances>
 
                     {/* Auto-Save Manager */}
                     <SaveManager />

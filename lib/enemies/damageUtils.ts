@@ -1,4 +1,3 @@
-import { usePlayerStore } from '@/lib/store/playerStore';
 import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { DamageTextType } from '@/components/enemies/EnemyHealthBar';
 
@@ -50,11 +49,10 @@ export function calculateCritStats(
  */
 export function calculateBasicAttackDamage(
     baseDamage: number,
+    critChance: number,
+    critFactor: number,
     additionalMultiplier: number = 1.0
 ): DamageResult {
-    const { critChance } = usePlayerStore.getState();
-    const { critFactor } = useAccessoryStore.getState();
-
     const { critMult, type, isCrit, isSuperCrit } = calculateCritStats(critChance, critFactor);
 
     const damage = baseDamage * critMult * additionalMultiplier;
@@ -70,12 +68,11 @@ export function calculateBasicAttackDamage(
  */
 export function calculateAbilityDamage(
     playerDamage: number,
+    critChance: number,
+    critFactor: number,
     abilityStats: any,
     abilityMultiplier: number = 0.15
 ): DamageResult {
-    const { critChance } = usePlayerStore.getState();
-    const { critFactor } = useAccessoryStore.getState();
-
     const { critMult, type, isCrit, isSuperCrit } = calculateCritStats(
         critChance,
         critFactor,
@@ -102,4 +99,27 @@ export function calculateAbilityDamage(
 export function applyDefenseMultiplier(amount: number, defenseMultiplier: number): number {
     let alina = Math.min(0.999, defenseMultiplier)
     return Math.max(0, amount * (1.0 - alina));
+}
+
+/**
+ * Calculates current damage multiplier for a specific enemy type based on accessories.
+ */
+export function getEnemyDamageMultiplier(userData: any, accStore: any): number {
+    let multiplier = 1.0;
+    if (!userData) return multiplier;
+
+    const type = userData.enemyType || "";
+    const id = (userData.id || "").toLowerCase();
+
+    // 1. Trumpet Enchantment Multiplier (e.g. Brass Edge)
+    if (type === 'trumpet' || id.includes('trumpet')) {
+        multiplier = accStore.getEnchantmentBonus().trumpetDamageMultiplier;
+    }
+    // 2. Tuba Ligature Multiplier (e.g. Leather Ligature)
+    else if (type === 'tuba' || id.includes('tuba')) {
+        const tubaBonus = accStore.getLigatureBonus().tubaDamageBonus;
+        multiplier = 1 + tubaBonus;
+    }
+
+    return multiplier;
 }

@@ -64,25 +64,56 @@ export async function saveGame(save: Omit<PlayerSave, 'id' | 'timestamp'>) {
             timestamp: new Date(now).toISOString()
         });
 
-        // 2. Cull old records (keep only the 50 most recent)
-        // This is now done only when count exceeds 200 to reduce overhead
-        const count = await db.saves.count();
+        // 2. Cull old records (Non-blocking background task)
+        const count = await getThrottledCount();
         if (count > 200) {
-            const oldestRecords = await db.saves
-                .orderBy('timestamp')
-                .limit(count - 50)
-                .toArray();
+            // Offload culling to prevent blocking the save completion
+            const performCull = async () => {
+                try {
+                    const oldestRecords = await db.saves
+                        .orderBy('timestamp')
+                        .limit(count - 50)
+                        .toArray();
 
-            const idsToDelete = oldestRecords.map(r => r.id).filter((id): id is number => id !== undefined);
-            if (idsToDelete.length > 0) {
-                await db.saves.bulkDelete(idsToDelete);
-                console.log(`[DB] Culled ${idsToDelete.length} old save records because count hit ${count}`);
+                    const idsToDelete = oldestRecords.map(r => r.id).filter((id): id is number => id !== undefined);
+                    if (idsToDelete.length > 0) {
+                        await db.saves.bulkDelete(idsToDelete);
+                        console.log(`[DB] Culled ${idsToDelete.length} old save records in background`);
+                    }
+                } catch (e) {
+                    console.error('[DB] Background cull failed:', e);
+                }
+            };
+
+            if (typeof window !== 'undefined' && 'requestIdleCallback' in window) {
+                (window as any).requestIdleCallback(() => performCull());
+            } else {
+                setTimeout(performCull, 100);
             }
         }
     } catch (error) {
         console.error('[DB] Failed to save game:', error);
     }
 }
+
+let lastCount = -1;
+let lastCountTime = 0;
+let savesSinceLastCount = 0;
+
+async function getThrottledCount(): Promise<number> {
+    const now = Date.now();
+    // Re-check count only if it's been 5 minutes OR 40 saves have passed
+    if (lastCount === -1 || savesSinceLastCount >= 40 || (now - lastCountTime > 300000)) {
+        lastCount = await db.saves.count();
+        lastCountTime = now;
+        savesSinceLastCount = 0;
+    } else {
+        lastCount++; // Speculative increment
+        savesSinceLastCount++;
+    }
+    return lastCount;
+}
+
 
 /**
  * Load the latest game save based on timestamp.
@@ -130,6 +161,23 @@ export async function loadGame(): Promise<PlayerSave | undefined> {
         console.error('[DB] Failed to load game:', error);
         return undefined;
     }
+}
+
+/**
+ * Delete the latest save record.
+ */
+export async function deleteLatestSave() {
+    try {
+        const latest = await db.saves.orderBy('timestamp').reverse().limit(1).toArray();
+        if (latest.length > 0 && latest[0].id !== undefined) {
+            await db.saves.delete(latest[0].id);
+            console.log('[DB] Latest save deleted:', latest[0].id);
+            return true;
+        }
+    } catch (error) {
+        console.error('[DB] Failed to delete latest save:', error);
+    }
+    return false;
 }
 
 /**
