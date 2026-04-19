@@ -38,7 +38,7 @@ type GameConfig = {
 // --- Normal Game (main page) ---
 export const NORMAL_CONFIG: GameConfig = {
     // Player Starting Stats
-    STARTING_LEVEL: 100,
+    STARTING_LEVEL: 1,
 
     // Dungeon Settings
     BASE_DUNGEON_TIME: 20, // seconds
