@@ -32,7 +32,12 @@ import {
     MELD_TYPE_INFO,
     MELD_UNLOCK_LEVEL,
     getMeldStats,
-    getMeldTierCost
+    getMeldTierCost,
+    WeaponMeldType,
+    WEAPON_MELD_TYPE_INFO,
+    WEAPON_TIER_DAMAGE_MULTIPLIERS,
+    getWeaponMeldStats,
+    getWeaponMeldTierCost
 } from '@/lib/game/inventory';
 import { EnchantmentScreen } from './EnchantmentScreen';
 import { AbilityUpgradeSubTab } from './AbilityUpgradeSubTab';
@@ -106,6 +111,12 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
     // Case melding hooks
     const meldCase = useAccessoryStore((state) => state.meldCase);
     const getMeldBonus = useAccessoryStore((state) => state.getMeldBonus);
+
+    // Weapon melding hooks
+    const weaponMeldType = useAccessoryStore((state) => state.weaponMeldType);
+    const weaponMeldTier = useAccessoryStore((state) => state.weaponMeldTier);
+    const meldWeapon = useAccessoryStore((state) => state.meldWeapon);
+    const getWeaponMeldBonus = useAccessoryStore((state) => state.getWeaponMeldBonus);
 
     // Enchantment hooks
     const equippedEnchantments = useAccessoryStore((state) => state.equippedEnchantments);
@@ -253,7 +264,7 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                             tabs={['general', 'case_fragments'] as const}
                             activeTab={materialSubTab}
                             onTabChange={setMaterialSubTab}
-                            getLabel={(tab) => tab === 'general' ? 'General' : 'Case Fragments'}
+                            getLabel={(tab) => tab === 'general' ? 'General' : 'Fragments'}
                         />
 
                         {materialSubTab === 'general' && renderPhase >= 3 && (
@@ -573,9 +584,9 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                     <div className="text-slate-400">
                                         Health: <span className="text-purple-400">×{(getCaseBonus()?.healthMultiplier || 1).toFixed(2)}</span>
                                     </div>
-                                    {(getCaseBonus()?.speedBonus || 0) > 0 && (
+                                    {(getCaseBonus()?.speedMultiplier || 1) > 1 && (
                                         <div className="text-slate-400">
-                                            Speed: <span className="text-green-400">+{(getCaseBonus()?.speedBonus || 0).toFixed(2)} ft/s</span>
+                                            Speed: <span className="text-green-400">+{(Math.max(0, (getCaseBonus()?.speedMultiplier || 1) - 1) * 100).toFixed(1)}%</span>
                                         </div>
                                     )}
                                 </EquippedItemSummary>
@@ -940,6 +951,127 @@ export function InventoryScreen({ onClose }: InventoryScreenProps) {
                                 {level < MELD_UNLOCK_LEVEL && inventory.cases.length > 0 && (
                                     <div className="p-3 bg-slate-800/40 border border-slate-700/50 rounded-lg">
                                         <p className="text-sm text-slate-500">🔮 Case Melding unlocks at <span className="text-amber-400">Level {MELD_UNLOCK_LEVEL}</span></p>
+                                    </div>
+                                )}
+
+                                {/* Weapon Melding */}
+                                {level >= MELD_UNLOCK_LEVEL && (
+                                    <div>
+                                        <h3 className="text-red-400 text-xs font-bold uppercase tracking-wider mb-2">⚔️ Meld Weapon (Lv {MELD_UNLOCK_LEVEL}+)</h3>
+                                        <p className="text-[10px] text-slate-500 mb-2">Meld fragments onto your weapon to boost a primary stat and increase base damage. Upgradeable to tier 5.</p>
+                                        <div className="space-y-2">
+                                            {/* No meld yet - show type selection */}
+                                            {weaponMeldTier === 0 && (
+                                                <div className="p-3 bg-slate-800/40 border border-red-600/30 rounded-lg">
+                                                    <div className="flex items-center gap-2 mb-2">
+                                                        <span className="text-lg">⚔️</span>
+                                                        <span className="font-bold text-slate-200">Your Weapon</span>
+                                                        <span className="text-xs text-red-400">— Choose Meld Type</span>
+                                                    </div>
+                                                    <div className="grid grid-cols-5 gap-1">
+                                                        {(Object.keys(WEAPON_MELD_TYPE_INFO) as WeaponMeldType[]).map((mt) => (
+                                                            <button
+                                                                key={mt}
+                                                                onClick={() => meldWeapon(mt)}
+                                                                className="p-2 rounded border border-slate-600 bg-slate-800/50 hover:border-red-500/50 hover:bg-red-900/20 transition-colors text-center"
+                                                            >
+                                                                <div className="text-lg">{WEAPON_MELD_TYPE_INFO[mt].emoji}</div>
+                                                                <div className="text-[9px] text-slate-300">{WEAPON_MELD_TYPE_INFO[mt].name}</div>
+                                                                <div className="text-[8px] text-slate-500">{WEAPON_MELD_TYPE_INFO[mt].primaryStat}</div>
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                            )}
+
+                                            {/* Weapon is melded */}
+                                            {weaponMeldType && weaponMeldTier >= 1 && (() => {
+                                                const wMeldInfo = WEAPON_MELD_TYPE_INFO[weaponMeldType];
+                                                // Use pure function to avoid setState during render
+                                                const wMeldBonus = getWeaponMeldStats(weaponMeldType, weaponMeldTier);
+                                                const dmgMult = WEAPON_TIER_DAMAGE_MULTIPLIERS[weaponMeldTier];
+
+                                                const primaryLabel = `+${typeof wMeldBonus.primary === 'number' && wMeldBonus.primary < 1
+                                                    ? (wMeldBonus.primary * 100).toFixed(0) + '%'
+                                                    : wMeldBonus.primary
+                                                    } ${wMeldInfo.primaryStat}`;
+
+                                                // Max tier
+                                                if (weaponMeldTier >= 5) {
+                                                    return (
+                                                        <div className="flex items-center justify-between p-3 bg-slate-800/40 border border-red-600/30 rounded-lg">
+                                                            <div className="flex items-center gap-3">
+                                                                <div className="w-10 h-10 rounded bg-red-900/30 border border-red-600/50 flex items-center justify-center text-xl">
+                                                                    {wMeldInfo.emoji}
+                                                                </div>
+                                                                <div>
+                                                                    <span className="font-bold text-red-400">Weapon — {wMeldInfo.name} Meld</span>
+                                                                    <span className="text-xs text-yellow-400 ml-2">(MAX TIER 5)</span>
+                                                                    <div className="text-[10px] text-red-300">{primaryLabel} | ×{dmgMult} Base Damage</div>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    );
+                                                }
+
+                                                // Upgradeable
+                                                const nextTier = weaponMeldTier + 1;
+                                                const upgradeCost = getWeaponMeldTierCost(weaponMeldType, nextTier);
+                                                const canAfford = upgradeCost.every(ing => {
+                                                    const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
+                                                    return have >= ing.quantity;
+                                                });
+                                                const nextDmgMult = WEAPON_TIER_DAMAGE_MULTIPLIERS[nextTier];
+
+                                                return (
+                                                    <div className="flex items-center justify-between p-3 bg-slate-800/40 border border-slate-700 rounded-lg hover:bg-slate-800/60 transition-colors">
+                                                        <div className="flex items-center gap-3">
+                                                            <div className="w-10 h-10 rounded bg-red-900/30 border border-red-600/50 flex items-center justify-center text-xl">
+                                                                {wMeldInfo.emoji}
+                                                            </div>
+                                                            <div>
+                                                                <div className="font-bold text-slate-200">
+                                                                    Weapon — {wMeldInfo.name} Meld
+                                                                </div>
+                                                                <div className="text-xs text-red-400">Tier {weaponMeldTier} → Tier {nextTier}</div>
+                                                                <div className="text-[10px] text-red-300">{primaryLabel} | ×{dmgMult} → ×{nextDmgMult} Base Damage</div>
+                                                            </div>
+                                                        </div>
+
+                                                        <div className="flex items-center gap-6">
+                                                            <div className="flex flex-col gap-1 text-xs">
+                                                                {upgradeCost.map((ing, i) => {
+                                                                    const have = inventory.materials[ing.itemId as MaterialItemId] || 0;
+                                                                    const enough = have >= ing.quantity;
+                                                                    return (
+                                                                        <div key={i} className={`flex items-center gap-1 ${enough ? 'text-slate-400' : 'text-red-400'}`}>
+                                                                            <span>{ing.quantity}x {ITEM_DEFINITIONS[ing.itemId as ItemId]?.name || ing.itemId.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+                                                                            <span className="opacity-50">({have})</span>
+                                                                        </div>
+                                                                    );
+                                                                })}
+                                                            </div>
+
+                                                            <button
+                                                                onClick={() => meldWeapon(weaponMeldType!)}
+                                                                disabled={!canAfford}
+                                                                className={`px-4 py-2 rounded font-bold text-xs uppercase tracking-wider transition-all ${canAfford
+                                                                    ? 'bg-red-600 hover:bg-red-500 text-white shadow-lg shadow-red-900/20'
+                                                                    : 'bg-slate-700 text-slate-500 cursor-not-allowed'
+                                                                    }`}
+                                                            >
+                                                                Meld
+                                                            </button>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })()}
+                                        </div>
+                                    </div>
+                                )}
+                                {level < MELD_UNLOCK_LEVEL && (
+                                    <div className="p-3 bg-slate-800/40 border border-slate-700/50 rounded-lg">
+                                        <p className="text-sm text-slate-500">⚔️ Weapon Melding unlocks at <span className="text-red-400">Level {MELD_UNLOCK_LEVEL}</span></p>
                                     </div>
                                 )}
                             </div>

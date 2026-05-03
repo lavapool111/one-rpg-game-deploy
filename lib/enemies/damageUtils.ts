@@ -71,7 +71,8 @@ export function calculateAbilityDamage(
     critChance: number,
     critFactor: number,
     abilityStats: any,
-    abilityMultiplier: number = 0.15
+    abilityMultiplier: number = 0.15,
+    weaponBonus: number = 0
 ): DamageResult {
     const { critMult, type, isCrit, isSuperCrit } = calculateCritStats(
         critChance,
@@ -80,7 +81,7 @@ export function calculateAbilityDamage(
         abilityStats.critFactor || 0
     );
 
-    const baseAbilityDamage = playerDamage * abilityMultiplier;
+    const baseAbilityDamage = playerDamage * (abilityMultiplier + weaponBonus);
     const damageWithMultiplier = baseAbilityDamage * (abilityStats.damageMultiplier || 1.0);
     const totalBaseBonus = (abilityStats.baseDamageBonus || 0) + (abilityStats.impactBonus || 0) * 0.05;
 
@@ -99,6 +100,17 @@ export function calculateAbilityDamage(
 export function applyDefenseMultiplier(amount: number, defenseMultiplier: number): number {
     let alina = Math.min(0.999, defenseMultiplier)
     return Math.max(0, amount * (1.0 - alina));
+}
+
+/**
+ * Applies flat defense reduction to incoming damage.
+ * @param amount Raw incoming damage
+ * @param defensePoints Direct points to subtract
+ * @param penetration Decimal 0.0-1.0 to bypass defense
+ */
+export function applyFlatDefense(amount: number, defensePoints: number, penetration: number = 0): number {
+    const effectiveDefense = Math.max(0, defensePoints * (1 - penetration));
+    return Math.max(1, amount - effectiveDefense);
 }
 
 /**

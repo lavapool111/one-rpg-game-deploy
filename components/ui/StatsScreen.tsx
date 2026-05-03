@@ -6,6 +6,7 @@ import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { getReedData, getLigatureData, getLigatureStats, getMouthpieceData, getMouthpieceStats, getCaseData, getCaseStats, getEnchantmentData, ENCHANTMENT_SLOT_LEVELS, MELD_TYPE_INFO, getMeldStats } from '@/lib/game/inventory';
 import { getRarityColor } from '@/lib/game/inventory';
 import { ABILITY_UPGRADES_UNLOCK_LEVEL } from '@/lib/game/abilityUpgrades';
+import { WEAPON_TIER_DAMAGE_MULTIPLIERS, WeaponMeldType, WEAPON_MELD_TYPE_INFO } from '@/lib/game/inventoryData';
 
 interface StatsScreenProps {
     onClose: () => void;
@@ -38,6 +39,10 @@ export function StatsScreen({ onClose }: StatsScreenProps) {
     const equippedCase = useAccessoryStore((state) => state.equippedCase);
     const caseSlot = useAccessoryStore((state) => state.caseSlot);
     const getMeldBonus = useAccessoryStore((state) => state.getMeldBonus);
+    // Weapon Meld
+    const weaponMeldType = useAccessoryStore((state) => state.weaponMeldType);
+    const weaponMeldTier = useAccessoryStore((state) => state.weaponMeldTier);
+    const getWeaponMeldBonus = useAccessoryStore((state) => state.getWeaponMeldBonus);
 
     // Enchantments
     const equippedEnchantments = useAccessoryStore((state) => state.equippedEnchantments);
@@ -108,6 +113,8 @@ export function StatsScreen({ onClose }: StatsScreenProps) {
         const meldBonus = getMeldBonus();
         totalDefenseValue += meldBonus.defense;
 
+        const weaponMeldBonus = getWeaponMeldBonus();
+
         return {
             abilityUpgradeStats: abilityUpgradeStatsValue,
             ligatureStats,
@@ -119,7 +126,8 @@ export function StatsScreen({ onClose }: StatsScreenProps) {
             tubaDamageBonus,
             totalCritFactor: totalCritFactorValue,
             totalDefense: totalDefenseValue,
-            meldBonus
+            meldBonus,
+            weaponMeldBonus
         };
     }, [
         getAbilityUpgradeStats, equippedLigature, equippedMouthpiece, equippedCase, equippedEnchantments,
@@ -137,7 +145,8 @@ export function StatsScreen({ onClose }: StatsScreenProps) {
         tubaDamageBonus,
         totalCritFactor,
         totalDefense,
-        meldBonus
+        meldBonus,
+        weaponMeldBonus
     } = derivedStats;
 
     // Staggered rendering phase (0 to 6)
@@ -241,7 +250,19 @@ export function StatsScreen({ onClose }: StatsScreenProps) {
                                 {/* Combat Stats */}
                                 <div className="p-4 rounded-lg bg-slate-800/30 border border-slate-700">
                                     <SectionHeader title="Combat Stats" icon="⚔️" />
-                                    <StatRow label="Base Damage" value={Math.floor(basicAttackDamage || damage || 0)} />
+                                    <StatRow
+                                        label="Base Damage"
+                                        value={Math.floor(basicAttackDamage || damage || 0)}
+                                        subtext={weaponMeldTier > 0 ? `(×${WEAPON_TIER_DAMAGE_MULTIPLIERS[weaponMeldTier]} weapon tier multiplier)` : undefined}
+                                    />
+                                    {weaponMeldTier > 0 && weaponMeldType && (
+                                        <StatRow
+                                            label="Weapon Meld"
+                                            value={WEAPON_MELD_TYPE_INFO[weaponMeldType].name}
+                                            subtext={`${WEAPON_MELD_TYPE_INFO[weaponMeldType].primaryStat}: +${typeof weaponMeldBonus.primary === 'number' && weaponMeldBonus.primary < 1 ? (weaponMeldBonus.primary * 100).toFixed(0) + '%' : weaponMeldBonus.primary}`}
+                                            color="text-red-400"
+                                        />
+                                    )}
                                     <StatRow label="Base Health" value={Math.floor(maxHealth)} color="text-red-400" />
                                     <StatRow label="Base Speed" value={`${speed.toFixed(2)} ft/s`} color="text-cyan-400" />
                                     <StatRow label="Base Crit Chance" value={`${((critChance || 0) * 100).toFixed(1)}%`} color="text-orange-400" />
@@ -465,7 +486,7 @@ export function StatsScreen({ onClose }: StatsScreenProps) {
                                                                     </p>
                                                                     {caseStats.speedBonus > 0 && (
                                                                         <p className="text-xs text-cyan-400">
-                                                                            +{caseStats.speedBonus.toFixed(2)} ft/s Speed
+                                                                            +{caseStats.speedBonus.toFixed(2)} ft/s
                                                                         </p>
                                                                     )}
                                                                 </>

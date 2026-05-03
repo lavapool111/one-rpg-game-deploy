@@ -122,3 +122,27 @@ export function rollEnemyForZone(id: string): { type: EnemyType; level: number }
     const last = zone.enemies[zone.enemies.length - 1];
     return { type: last.type, level: randomLevel(last.levelRange[0], last.levelRange[1]) };
 }
+
+/**
+ * Returns collision boundary data for a zone to pass to enemies.
+ */
+export function getZoneBoundary(id: string): any | null {
+    const zone = registry.get(id);
+    if (!zone) return null;
+
+    if (zone.shape === 'circle') {
+        return {
+            arenaCenter: [zone.centerX || 0, zone.floorY || 0, zone.centerZ || 0],
+            radius: zone.radius || 10
+        };
+    }
+
+    // AABB rooms treated as non-rotated RectangleBoundaries
+    return {
+        centerX: (zone.minX + zone.maxX) / 2,
+        centerZ: (zone.minZ + zone.maxZ) / 2,
+        width: zone.maxX - zone.minX,
+        length: zone.maxZ - zone.minZ,
+        angle: 0
+    };
+}

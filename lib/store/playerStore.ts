@@ -321,7 +321,7 @@ export const usePlayerStore = create<PlayerState>()(
     ...getInitialStats(),
     isAttacking: false,
     attackProgress: 0,
-    attackCooldown: 0.5,
+    attackCooldown: 0.05,
     lastAttackTime: 0,
     isInvincible: false,
     isLongToneActive: false,
@@ -349,7 +349,7 @@ export const usePlayerStore = create<PlayerState>()(
     attack: () => {
       const now = Date.now();
       const state = get();
-      if (state.isAttacking || now - state.lastAttackTime < state.attackCooldown * 1000) return;
+      if (now - state.lastAttackTime < state.attackCooldown * 1000) return;
       set((state) => ({ isAttacking: true, attackProgress: 0, lastAttackTime: now, version: state.version + 1 }));
       getAccessoryStore().getState().incrementAttackCounter();
     },
@@ -366,15 +366,28 @@ export const usePlayerStore = create<PlayerState>()(
       if (saved.level) {
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
-        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const caseBonuses = accStore.getCaseBonus ? accStore.getCaseBonus() : { healthMultiplier: 1, speedMultiplier: 1 };
         const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-        const derived = calculateStats(saved.level, accStore.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+
+        // Pass saved weapon tier if available, otherwise fallback to current store state
+        const wTier = saved.weaponMeldTier !== undefined ? saved.weaponMeldTier : (accStore.weaponMeldTier || 0);
+
+        const derived = calculateStats(
+          saved.level,
+          accStore.equippedReed,
+          newStats.embouchure,
+          getSlotMultiplier(accStore.reedSlot),
+          caseBonuses.healthMultiplier,
+          caseBonuses.speedMultiplier,
+          enchantmentBonus.permanentSpeedBonus,
+          wTier
+        );
         newStats.maxHealth = derived.health;
         newStats.damage = derived.damage;
         newStats.basicAttackDamage = derived.basicAttackDamage;
         newStats.speed = derived.speed;
         newStats.critChance = derived.critChance;
-        newStats.superCritChance = (derived as any).superCritChance || 0;
+        newStats.superCritChance = derived.superCritChance;
         newStats.defense = derived.defense;
         newStats.maxXp = getXpRequiredForLevel(saved.level);
       }
@@ -391,20 +404,33 @@ export const usePlayerStore = create<PlayerState>()(
         getAccessoryStore().setState({ equippedReed: saved.equippedReed });
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
-        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedMultiplier: accStore.getCaseBonus().speedMultiplier } : { healthMultiplier: 1, speedMultiplier: 1 };
         const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-        const derived = calculateStats(newStats.level, saved.equippedReed, newStats.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+
+        // Pass saved weapon tier if available
+        const wTier = saved.weaponMeldTier !== undefined ? saved.weaponMeldTier : (accStore.weaponMeldTier || 0);
+
+        const derived = calculateStats(
+          newStats.level,
+          saved.equippedReed,
+          newStats.embouchure,
+          getSlotMultiplier(accStore.reedSlot),
+          caseBonuses.healthMultiplier,
+          caseBonuses.speedMultiplier,
+          enchantmentBonus.permanentSpeedBonus,
+          wTier
+        );
         newStats.maxHealth = derived.health;
         newStats.damage = derived.damage;
         newStats.basicAttackDamage = derived.basicAttackDamage;
         newStats.speed = derived.speed;
         newStats.critChance = derived.critChance;
-        newStats.superCritChance = (derived as any).superCritChance || 0;
+        newStats.superCritChance = derived.superCritChance;
         newStats.defense = derived.defense;
       }
 
       if (saved.maxHealth) newStats.maxHealth = saved.maxHealth;
-      if (saved.position) newStats.position = [saved.position.x, saved.position.y, saved.position.z];
+      if (saved.position) newStats.position = [saved.position[0], saved.position[1], saved.position[2]];
 
       // Restore inventory
       if (saved.inventory) {
@@ -459,9 +485,9 @@ export const usePlayerStore = create<PlayerState>()(
         const currentState = get();
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
-        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedMultiplier: accStore.getCaseBonus().speedMultiplier } : { healthMultiplier: 1, speedMultiplier: 1 };
         const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-        const finalStats = calculateStats(currentState.level, accStore.equippedReed, currentState.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+        const finalStats = calculateStats(currentState.level, accStore.equippedReed, currentState.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
         let mpCritBonus = 0;
         if (accStore.equippedMouthpiece) {
@@ -483,6 +509,7 @@ export const usePlayerStore = create<PlayerState>()(
           defense: finalStats.defense,
           health: Math.min(s.health, finalStats.health),
           isLoading: false, // Done loading!
+          version: s.version + 1, // Trigger save once loaded
         }));
         getAccessoryStore().setState({ critFactor: finalCritFactor });
       }, 300); // Slightly longer delay to ensure all stores are ready
@@ -503,14 +530,20 @@ export const usePlayerStore = create<PlayerState>()(
           xp -= maxXp;
           level += 1;
           const accStore = getAccessoryStore().getState();
-          const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+          const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedMultiplier: accStore.getCaseBonus().speedMultiplier } : { healthMultiplier: 1, speedMultiplier: 1 };
           const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
           const newMaxXp = getXpRequiredForLevel(level);
           health = newStats.health;
           maxHealth = newStats.health;
           damage = newStats.damage;
           basicAttackDamage = newStats.basicAttackDamage;
+          // Apply weapon meld damage multiplier
+          const wTier = accStore.weaponMeldTier || 0;
+          if (wTier > 0) {
+            const { WEAPON_TIER_DAMAGE_MULTIPLIERS: WTDM } = require('../game/inventoryData');
+            basicAttackDamage = Math.floor(basicAttackDamage * WTDM[wTier]);
+          }
           speed = newStats.speed;
           critChance = newStats.critChance;
           superCritChance = (newStats as any).superCritChance || 0;
@@ -560,15 +593,58 @@ export const usePlayerStore = create<PlayerState>()(
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const newLevel = state.level + 1;
         const accStore = getAccessoryStore().getState();
-        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedMultiplier: accStore.getCaseBonus().speedMultiplier } : { healthMultiplier: 1, speedMultiplier: 1 };
         const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-        const newStats = calculateStats(newLevel, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+        const newStats = calculateStats(
+          newLevel,
+          accStore.equippedReed,
+          state.embouchure,
+          getSlotMultiplier(accStore.reedSlot),
+          caseBonuses.healthMultiplier,
+          caseBonuses.speedMultiplier,
+          enchantmentBonus.permanentSpeedBonus,
+          accStore.weaponMeldTier || 0
+        );
         return {
           level: newLevel,
           maxHealth: newStats.health,
           health: newStats.health,
           damage: newStats.damage,
+          basicAttackDamage: newStats.basicAttackDamage,
           speed: newStats.speed,
+          critChance: newStats.critChance,
+          superCritChance: newStats.superCritChance,
+          defense: newStats.defense,
+          version: state.version + 1,
+        };
+      }),
+
+    recalculateStats: () =>
+      set((state) => {
+        const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
+        const accStore = getAccessoryStore().getState();
+        const caseBonuses = accStore.getCaseBonus ? accStore.getCaseBonus() : { healthMultiplier: 1, speedMultiplier: 1 };
+        const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
+
+        const newStats = calculateStats(
+          state.level,
+          accStore.equippedReed,
+          state.embouchure,
+          getSlotMultiplier(accStore.reedSlot),
+          caseBonuses.healthMultiplier,
+          caseBonuses.speedMultiplier,
+          enchantmentBonus.permanentSpeedBonus,
+          accStore.weaponMeldTier || 0
+        );
+
+        return {
+          maxHealth: newStats.health,
+          speed: newStats.speed,
+          damage: newStats.damage,
+          basicAttackDamage: newStats.basicAttackDamage,
+          critChance: newStats.critChance,
+          superCritChance: newStats.superCritChance,
+          defense: newStats.defense,
           version: state.version + 1,
         };
       }),
@@ -683,9 +759,18 @@ export const usePlayerStore = create<PlayerState>()(
         const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
         const accStore = getAccessoryStore().getState();
         const gameStore = useGameStore.getState();
-        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+        const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedMultiplier: accStore.getCaseBonus().speedMultiplier } : { healthMultiplier: 1, speedMultiplier: 1 };
         const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-        const stats = calculateStats(state.level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+        const stats = calculateStats(
+          state.level,
+          accStore.equippedReed,
+          state.embouchure,
+          getSlotMultiplier(accStore.reedSlot),
+          caseBonuses.healthMultiplier,
+          caseBonuses.speedMultiplier,
+          enchantmentBonus.permanentSpeedBonus,
+          accStore.weaponMeldTier || 0
+        );
 
         let spawnPos: [number, number, number] = [0, 1.5, 0];
 
@@ -722,6 +807,7 @@ export const usePlayerStore = create<PlayerState>()(
           overtoneCooldown: 0,
           tempo: 0,
           rating: 'F',
+          version: state.version + 1,
         };
       });
     },
@@ -764,13 +850,19 @@ export const usePlayerStore = create<PlayerState>()(
           level += 1;
           const { calculateStats, getSlotMultiplier } = require('./accessoryStore');
           const accStore = getAccessoryStore().getState();
-          const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedBonus: accStore.getCaseBonus().speedBonus } : { healthMultiplier: 1, speedBonus: 0 };
+          const caseBonuses = accStore.getCaseBonus ? { healthMultiplier: accStore.getCaseBonus().healthMultiplier, speedMultiplier: accStore.getCaseBonus().speedMultiplier } : { healthMultiplier: 1, speedMultiplier: 1 };
           const enchantmentBonus = accStore.getEnchantmentBonus ? accStore.getEnchantmentBonus() : { permanentSpeedBonus: 0 };
-          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+          const newStats = calculateStats(level, accStore.equippedReed, state.embouchure, getSlotMultiplier(accStore.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
           health = newStats.health;
           maxHealth = newStats.health;
           damage = newStats.damage;
           basicAttackDamage = newStats.basicAttackDamage;
+          // Apply weapon meld damage multiplier
+          const killWTier = accStore.weaponMeldTier || 0;
+          if (killWTier > 0) {
+            const { WEAPON_TIER_DAMAGE_MULTIPLIERS: KWDM } = require('../game/inventoryData');
+            basicAttackDamage = Math.floor(basicAttackDamage * KWDM[killWTier]);
+          }
           speed = newStats.speed;
           critChance = newStats.critChance;
           superCritChance = (newStats as any).superCritChance || 0;

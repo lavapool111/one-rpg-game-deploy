@@ -25,11 +25,12 @@ const WALL_THETA_LENGTH = (3 * Math.PI) / 2;
 
 const SEGMENT_COUNT = 16;
 
-const RING_FLOOR_MATERIAL = new MeshStandardMaterial({ color: '#5a5a5a', roughness: 0.7, metalness: 0.1 });
-const RING_WALL_MATERIAL = new MeshStandardMaterial({ color: '#3a3a4a', roughness: 0.7, metalness: 0.15, side: BackSide, emissive: '#111122', emissiveIntensity: 0.15 });
-const RING_WALL_FRONT_MATERIAL = new MeshStandardMaterial({ color: '#3a3a4a', roughness: 0.7, metalness: 0.15, emissive: '#111122', emissiveIntensity: 0.15 });
-const RING_CEILING_MATERIAL = new MeshStandardMaterial({ color: '#333340', roughness: 0.8, metalness: 0.1, side: DoubleSide });
-const RING_TRIM_MATERIAL = new MeshStandardMaterial({ color: '#c9a96e', roughness: 0.3, metalness: 0.7, emissive: '#8a6a3a', emissiveIntensity: 0.3 });
+const RING_FLOOR_MATERIAL = new MeshStandardMaterial({ color: '#8B4513', roughness: 0.3, metalness: 0.1 }); // Match CORRIDOR_FLOOR_MATERIAL
+const RING_WALL_MATERIAL = new MeshStandardMaterial({ color: '#CD7F32', roughness: 0.4, metalness: 0.6, side: DoubleSide }); // Match CORRIDOR_BRONZE_MATERIAL
+const RING_WALL_FRONT_MATERIAL = new MeshStandardMaterial({ color: '#CD7F32', roughness: 0.4, metalness: 0.6, side: DoubleSide });
+const RING_ARCH_PILLAR_MATERIAL = new MeshStandardMaterial({ color: '#8B4513', roughness: 0.3, metalness: 0.1 });
+const RING_CEILING_MATERIAL = new MeshStandardMaterial({ color: '#CD7F32', roughness: 0.5, metalness: 0.4, side: DoubleSide });
+const RING_TRIM_MATERIAL = new MeshStandardMaterial({ color: '#DAA520', roughness: 0.3, metalness: 0.7, emissive: '#DAA520', emissiveIntensity: 0.1 }); // Match CORRIDOR_GOLD_EMISSIVE_MATERIAL
 
 export const OuterBackstage = memo(function OuterBackstage() {
     const [isVisible, setIsVisible] = useState(false);
@@ -112,8 +113,12 @@ export const OuterBackstage = memo(function OuterBackstage() {
                 <primitive object={RING_TRIM_MATERIAL} attach="material" />
             </mesh>
 
+            {/* Ambient lighting to replace the culled Band Room light */}
+            <ambientLight intensity={0.4} color="#ecb987" />
+
             <ArcEndCap angle={ARC_START} />
             <ArcEndCap angle={ARC_END} />
+            <OuterBackstageArches segments={segments} />
             <RingLights segments={segments} />
         </group>
     );
@@ -146,8 +151,39 @@ const RingLights = memo(function RingLights({ segments }: { segments: { midAngle
 
     return (
         <group ref={groupRef}>
-            {segments.filter((_, i) => i % 4 === 0).map((seg, i) => (
-                <pointLight key={i} position={[Math.cos(seg.midAngle) * RING_CENTER_RADIUS, RING_HEIGHT - 3, Math.sin(seg.midAngle) * RING_CENTER_RADIUS]} intensity={1200} color="#baddff" distance={450} decay={2} />
+            {segments.filter((_, i) => i % 2 === 0).map((seg, i) => (
+                <pointLight key={i} position={[Math.cos(seg.midAngle) * RING_CENTER_RADIUS, RING_HEIGHT - 3, Math.sin(seg.midAngle) * RING_CENTER_RADIUS]} intensity={1800} color="#c9a97a" distance={600} decay={2} />
+            ))}
+        </group>
+    );
+});
+
+const OuterBackstageArches = memo(function OuterBackstageArches({ segments }: { segments: { startAngle: number }[] }) {
+    return (
+        <group>
+            {segments.map((seg, i) => (
+                <group key={`arch-${i}`} position={[Math.cos(seg.startAngle) * RING_CENTER_RADIUS, 0, Math.sin(seg.startAngle) * RING_CENTER_RADIUS]} rotation={[0, -seg.startAngle + Math.PI / 2, 0]}>
+                    {/* Left pillar (Inner wall side) */}
+                    <mesh position={[-RING_WIDTH / 2 + 3, RING_HEIGHT / 2, 0]}>
+                        <boxGeometry args={[6, RING_HEIGHT, 6]} />
+                        <primitive object={RING_ARCH_PILLAR_MATERIAL} attach="material" />
+                    </mesh>
+                    {/* Right pillar (Outer wall side) */}
+                    <mesh position={[RING_WIDTH / 2 - 3, RING_HEIGHT / 2, 0]}>
+                        <boxGeometry args={[6, RING_HEIGHT, 6]} />
+                        <primitive object={RING_ARCH_PILLAR_MATERIAL} attach="material" />
+                    </mesh>
+                    {/* Arched connection (flat ceiling beam) */}
+                    <mesh position={[0, RING_HEIGHT - 3, 0]}>
+                        <boxGeometry args={[RING_WIDTH - 12, 6, 6]} />
+                        <primitive object={RING_TRIM_MATERIAL} attach="material" />
+                    </mesh>
+                    {/* Curved arch section underneath the beam */}
+                    <mesh position={[0, RING_HEIGHT - 6, 0]} rotation={[0, 0, 0]} scale={[1, 0.25, 1]}>
+                        <torusGeometry args={[(RING_WIDTH - 12) / 2, 3, 16, 32, Math.PI]} />
+                        <primitive object={RING_WALL_MATERIAL} attach="material" />
+                    </mesh>
+                </group>
             ))}
         </group>
     );

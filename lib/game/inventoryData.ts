@@ -21,7 +21,7 @@ export type MaterialItemId =
     | 'sheet_music_fragments_legendary'
     | 'spit_valve_liquid'
     | 'brass_essence'
-    // Case Fragments (5 types × 5 tiers)
+    // Fragments (5 types × 5 tiers) — used for both case and weapon melding
     | 'plated_fragment_t1' | 'plated_fragment_t2' | 'plated_fragment_t3' | 'plated_fragment_t4' | 'plated_fragment_t5'
     | 'weaved_fragment_t1' | 'weaved_fragment_t2' | 'weaved_fragment_t3' | 'weaved_fragment_t4' | 'weaved_fragment_t5'
     | 'sundered_fragment_t1' | 'sundered_fragment_t2' | 'sundered_fragment_t3' | 'sundered_fragment_t4' | 'sundered_fragment_t5'
@@ -186,6 +186,62 @@ export const MELD_TIER_COSTS: Array<{
         { fragments: [{ tier: 1, quantity: 24 }, { tier: 2, quantity: 5 }, { tier: 3, quantity: 1 }], brassIngots: 60, reinforcedBrassIngots: 15, infusedBrassIngots: 0 },
         { fragments: [{ tier: 2, quantity: 30 }, { tier: 3, quantity: 15 }, { tier: 4, quantity: 1 }], brassIngots: 480, reinforcedBrassIngots: 75, infusedBrassIngots: 15 },
         { fragments: [{ tier: 3, quantity: 60 }, { tier: 4, quantity: 16 }, { tier: 5, quantity: 1 }], brassIngots: 2016, reinforcedBrassIngots: 224, infusedBrassIngots: 56 },
+    ];
+
+// ============= WEAPON MELDING SYSTEM =============
+export type WeaponMeldType = MeldType; // same 5 types
+
+export const WEAPON_MELD_TYPE_INFO: Record<WeaponMeldType, { name: string; primaryStat: string; emoji: string }> = {
+    plated: { name: 'Plated', primaryStat: 'Ability Tick Damage', emoji: '🛡️' },
+    weaved: { name: 'Weaved', primaryStat: 'Range', emoji: '🧵' },
+    sundered: { name: 'Sundered', primaryStat: 'Crit Factor', emoji: '⚡' },
+    metallic: { name: 'Metallic', primaryStat: 'Impact', emoji: '⚙️' },
+    corrupted: { name: 'Corrupted', primaryStat: 'Defense Penetration', emoji: '💀' },
+};
+
+// Per-tier stat bonuses for weapon melds
+// primary: the unique effect per type, secondary: base damage multiplier (shared)
+export interface WeaponMeldTierStat {
+    abilityTickBonus: number; // bonus added to ability damage tick % (e.g. 0.05 = +5%)
+    range: number;           // bonus attack range in units
+    critFactor: number;      // bonus crit multiplier
+    impact: number;          // bonus knockback
+    defensePenetration: number; // % of enemy defense bypassed
+}
+
+// Each tier accumulates — these are the TOTAL bonuses at that tier
+export const WEAPON_MELD_TIER_STATS: WeaponMeldTierStat[] = [
+    // Tier 1
+    { abilityTickBonus: 0.05, range: 0.5, critFactor: 0.15, impact: 1, defensePenetration: 0.03 },
+    // Tier 2
+    { abilityTickBonus: 0.10, range: 1.0, critFactor: 0.35, impact: 2, defensePenetration: 0.06 },
+    // Tier 3
+    { abilityTickBonus: 0.15, range: 1.8, critFactor: 0.60, impact: 4, defensePenetration: 0.10 },
+    // Tier 4
+    { abilityTickBonus: 0.20, range: 2.8, critFactor: 1.00, impact: 7, defensePenetration: 0.16 },
+    // Tier 5
+    { abilityTickBonus: 0.25, range: 4.0, critFactor: 1.50, impact: 11, defensePenetration: 0.24 },
+];
+
+// Base damage multiplier for weapon meld tiers (index 0=no meld, 1=T1, etc.)
+export const WEAPON_TIER_DAMAGE_MULTIPLIERS = [1.0, 1.2, 1.4, 1.7, 2.1, 2.6];
+
+// Weapon meld costs (valve-based recipes)
+export const WEAPON_MELD_TIER_COSTS: Array<{
+    fragments: Array<{ tier: number; quantity: number }>;
+    heavyValves: number;
+    reinforcedValves: number;
+    infusedValves: number;
+    moonlightAzarite: number;
+}> = [
+        // T1→T2
+        { fragments: [{ tier: 1, quantity: 5 }, { tier: 2, quantity: 1 }], heavyValves: 15, reinforcedValves: 0, infusedValves: 0, moonlightAzarite: 0 },
+        // T2→T3
+        { fragments: [{ tier: 1, quantity: 15 }, { tier: 2, quantity: 5 }, { tier: 3, quantity: 1 }], heavyValves: 45, reinforcedValves: 15, infusedValves: 0, moonlightAzarite: 0 },
+        // T3→T4
+        { fragments: [{ tier: 2, quantity: 25 }, { tier: 3, quantity: 10 }, { tier: 4, quantity: 1 }], heavyValves: 135, reinforcedValves: 50, infusedValves: 10, moonlightAzarite: 0 },
+        // T4→T5
+        { fragments: [{ tier: 3, quantity: 40 }, { tier: 4, quantity: 15 }, { tier: 5, quantity: 1 }], heavyValves: 0, reinforcedValves: 135, infusedValves: 50, moonlightAzarite: 10 },
     ];
 
 export const CASE_DATA = [
@@ -481,7 +537,7 @@ export const ITEM_DEFINITIONS = {
     spit_valve_liquid: { id: 'spit_valve_liquid', name: 'Spit Valve Liquid', description: 'A glowing, viscous liquid collected from brass instruments. Gross but powerful.', category: 'materials', rarity: 'common' },
     brass_essence: { id: 'brass_essence', name: 'Brass Essence', description: 'Pure distilled essence of brass instruments. Used for advanced crafting.', category: 'materials', rarity: 'rare' },
 
-    // Case Fragments
+    // Fragments (used for both case and weapon melding)
     plated_fragment_t1: { id: 'plated_fragment_t1', name: 'Plated Fragment (T1)', description: 'A thin plated shard torn from a trumpet\'s casing.', category: 'materials', rarity: 'common' },
     plated_fragment_t2: { id: 'plated_fragment_t2', name: 'Plated Fragment (T2)', description: 'A sturdy plated shard with hardened brass layers.', category: 'materials', rarity: 'uncommon' },
     plated_fragment_t3: { id: 'plated_fragment_t3', name: 'Plated Fragment (T3)', description: 'A dense plated shard that hums with residual resonance.', category: 'materials', rarity: 'rare' },

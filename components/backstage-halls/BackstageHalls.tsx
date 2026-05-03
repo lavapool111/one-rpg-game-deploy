@@ -6,7 +6,7 @@ import { KeyPickup } from './KeyPickup';
 import { Vault } from './Vault';
 import { BackstageSpawner } from '../enemies/BackstageSpawner';
 import { InstrumentCase, InstrumentCaseInstances } from './InstrumentCase';
-import { CulledPointLight, PillarInstances } from './DungeonDecorations';
+import { CulledPointLight, PillarInstances, WallTorchInstances, WallInstances, CeilingInstances } from './DungeonDecorations';
 import { useZoneCulling, ZoneCullingContext } from './UseZoneCulling';
 import { useGameStore } from '@/lib/store';
 import AudioManager from '@/lib/audio/AudioManager';
@@ -90,124 +90,143 @@ export function BackstageHalls({
 
     return (
         <ZoneCullingContext.Provider value={zoneCulling}>
-            <group>
-                {/* Balanced ambient light - neutral white */}
-                <ambientLight intensity={0.7} color="#ffffff" />
+            <PillarInstances>
+                {() => (
+                    <InstrumentCaseInstances>
+                        {() => (
+                            <WallTorchInstances>
+                                {() => (
+                                    <WallInstances>
+                                        {(wallModels) => (
+                                            <CeilingInstances>
+                                                {(ceilingModels) => (
+                                                    <group>
+                                                        {/* Balanced ambient light - neutral white */}
+                                                        <ambientLight intensity={0.7} color="#ffffff" />
 
-                {/* Hemisphere light - warm top, cool bottom */}
-                <hemisphereLight
-                    args={['#ffffee', '#554433', 0.5]}
-                    position={[0, 20, 0]}
-                />
+                                                        {/* Hemisphere light - warm top, cool bottom */}
+                                                        <hemisphereLight
+                                                            args={['#ffffee', '#554433', 0.5]}
+                                                            position={[0, 20, 0]}
+                                                        />
 
-                {/* Warm point lights for torch glow */}
-                <CulledPointLight position={[-12, 8, 0]} intensity={50} color="#ff9955" distance={60} decay={2} />
-                <CulledPointLight position={[12, 8, 0]} intensity={50} color="#ff9955" distance={60} decay={2} />
-                <CulledPointLight position={[0, 8, -15]} intensity={50} color="#ff9955" distance={60} decay={2} />
-                <CulledPointLight position={[0, 8, 15]} intensity={50} color="#ff9955" distance={60} decay={2} />
+                                                        {/* Warm point lights for torch glow */}
+                                                        <CulledPointLight position={[-12, 8, 0]} intensity={30} color="#ff9955" distance={60} decay={2} />
+                                                        <CulledPointLight position={[12, 8, 0]} intensity={30} color="#ff9955" distance={60} decay={2} />
+                                                        <CulledPointLight position={[0, 8, -15]} intensity={30} color="#ff9955" distance={60} decay={2} />
+                                                        <CulledPointLight position={[0, 8, 15]} intensity={30} color="#ff9955" distance={60} decay={2} />
 
-                {/* Central Hub Room */}
-                <HubRoom />
+                                                        {/* Central Hub Room */}
+                                                        <HubRoom />
 
-                {/* Exit door at back of hub */}
-                <ExitDoor />
+                                                        {/* Exit door at back of hub */}
+                                                        <ExitDoor />
 
-                {/* Hub Descent — two passages behind pillars converging to spiral staircase */}
-                <HubDescent />
+                                                        {/* Hub Descent — two passages behind pillars converging to spiral staircase */}
+                                                        <HubDescent />
 
-                {/* Three Branching Corridors */}
-                <Corridor
-                    angle={-Math.PI / 2}
-                    roomOffset={17.5}
-                    spawnZone={{
-                        id: 'left',
-                        label: 'Left Path',
-                        triggerPoint: { x: -25, z: 0 },
-                        enemies: [
-                            { type: 'trumpet', weight: 0.5, levelRange: [10, 18] },
-                            { type: 'trombone', weight: 0.5, levelRange: [10, 18] },
-                        ],
-                        frenchHornChance: 0.075,
-                        frenchHornLevelRange: [16, 21],
-                        respawnDelay: 10000
-                    }}
-                >
-                    <LeftRoomMainZone>
-                        <LeftUpperVaultZone />
-                        <LeftPrisonCorridorZone />
-                    </LeftRoomMainZone>
-                </Corridor>
+                                                        {/* Three Branching Corridors */}
+                                                        <Corridor
+                                                            angle={-Math.PI / 2}
+                                                            roomOffset={17.5}
+                                                            spawnZone={{
+                                                                id: 'left_corridor',
+                                                                label: 'Left Path',
+                                                                triggerPoint: { x: -25, z: 0 },
+                                                                enemies: [
+                                                                    { type: 'trumpet', weight: 0.5, levelRange: [10, 18] },
+                                                                    { type: 'trombone', weight: 0.5, levelRange: [10, 18] },
+                                                                ],
+                                                                frenchHornChance: 0.075,
+                                                                frenchHornLevelRange: [16, 21],
+                                                                respawnDelay: 10000
+                                                            }}
+                                                        >
+                                                            <LeftRoomMainZone>
+                                                                <LeftUpperVaultZone />
+                                                                <LeftPrisonCorridorZone />
+                                                            </LeftRoomMainZone>
+                                                        </Corridor>
 
-                <Corridor
-                    angle={0}
-                    roomOffset={30}
-                    spawnZone={{
-                        id: 'center',
-                        label: 'Center Path',
-                        triggerPoint: { x: 0, z: 25 },
-                        enemies: [
-                            { type: 'trumpet', weight: 0.5, levelRange: [9, 12] },
-                            { type: 'trombone', weight: 0.5, levelRange: [9, 14] },
-                        ],
-                        frenchHornChance: 0.075,
-                        frenchHornLevelRange: [16, 21],
-                        respawnDelay: 10000
+                                                        <Corridor
+                                                            angle={0}
+                                                            roomOffset={30}
+                                                            spawnZone={{
+                                                                id: 'center_corridor',
+                                                                label: 'Center Path',
+                                                                triggerPoint: { x: 0, z: 25 },
+                                                                enemies: [
+                                                                    { type: 'trumpet', weight: 0.5, levelRange: [9, 12] },
+                                                                    { type: 'trombone', weight: 0.5, levelRange: [9, 14] },
+                                                                ],
+                                                                frenchHornChance: 0.075,
+                                                                frenchHornLevelRange: [16, 21],
+                                                                respawnDelay: 10000
 
-                    }}
-                >
-                    <CenterVaultZone>
-                        <CircularVaultZone />
-                    </CenterVaultZone>
-                </Corridor>
+                                                            }}
+                                                        >
+                                                            <CenterVaultZone>
+                                                                <CircularVaultZone />
+                                                            </CenterVaultZone>
+                                                        </Corridor>
 
-                <Corridor
-                    angle={Math.PI / 2}
-                    roomOffset={12.5}
-                    spawnZone={{
-                        id: 'right',
-                        label: 'Right Path',
-                        triggerPoint: { x: 25, z: 0 },
-                        enemies: [
-                            { type: 'trumpet', weight: 1.0, levelRange: [18, 24] },
-                        ],
-                        frenchHornChance: 0.075,
-                        frenchHornLevelRange: [26, 31],
-                        respawnDelay: 10000
+                                                        <Corridor
+                                                            angle={Math.PI / 2}
+                                                            roomOffset={12.5}
+                                                            spawnZone={{
+                                                                id: 'right_corridor',
+                                                                label: 'Right Path',
+                                                                triggerPoint: { x: 25, z: 0 },
+                                                                enemies: [
+                                                                    { type: 'trumpet', weight: 1.0, levelRange: [18, 24] },
+                                                                ],
+                                                                frenchHornChance: 0.075,
+                                                                frenchHornLevelRange: [26, 31],
+                                                                respawnDelay: 10000
 
-                    }}
-                >
-                    <RightMainZone />
-                </Corridor>
+                                                            }}
+                                                        >
+                                                            <RightMainZone />
+                                                        </Corridor>
 
-                {/* Test Key Spawns - 3 Resonance Keys in corridors */}
-                <KeyPickup type="resonance" position={[-20, 1, 0]} />
-                <KeyPickup type="resonance" position={[20, 1, 0]} />
-                <KeyPickup type="resonance" position={[0, 1, 40]} />
+                                                        {/* Test Key Spawns - 3 Resonance Keys in corridors */}
+                                                        <KeyPickup type="resonance" position={[-20, 1, 0]} />
+                                                        <KeyPickup type="resonance" position={[20, 1, 0]} />
+                                                        <KeyPickup type="resonance" position={[0, 1, 40]} />
 
-                {/* Gold Vault at end of center corridor - rotated 180° to face player */}
-                <Vault type="gold" position={[0, 0, 85]} goldAmount={150} rotation={Math.PI} />
+                                                        {/* Gold Vault at end of center corridor - rotated 180° to face player */}
+                                                        <Vault type="gold" position={[0, 0, 85]} goldAmount={150} rotation={Math.PI} />
 
-                {/* Fog - not too dense */}
-                <fog attach="fog" args={['#1a1a2a', 20, 120]} />
+                                                        {/* Fog - not too dense */}
+                                                        <fog attach="fog" args={['#1a1a2a', 20, 120]} />
 
-                {/* Enemy Spawner */}
-                <BackstageSpawner enabled={useGameStore(state => state.simulationActive)} />
+                                                        {/* Enemy Spawner */}
+                                                        <BackstageSpawner enabled={useGameStore(state => state.simulationActive)} />
 
-                {/* Instrument Cases scattered in corridors */}
-                {/* Hub corners */}
-                <InstrumentCase id="hub-case-1" position={[-12, 0.5, -22]} type="Trumpet" level={1} />
-                <InstrumentCase id="hub-case-2" position={[12, 0.5, -22]} type="Horn" level={1} />
-                {/* Left Corridor */}
-                <InstrumentCase id="left-corr-case-1" position={[-35, 0.5, 4]} type="Trombone" level={1} />
-                <InstrumentCase id="left-corr-case-2" position={[-65, 0.5, -4]} type="Euphonium" level={1} />
-                {/* Right Corridor */}
-                <InstrumentCase id="right-corr-case-1" position={[35, 0.5, -4]} type="Trumpet" level={1} />
-                <InstrumentCase id="right-corr-case-2" position={[65, 0.5, 4]} type="Horn" level={1} />
-                {/* Center Corridor */}
-                <InstrumentCase id="center-corr-case-1" position={[-4, 0.5, 45]} type="Tuba" level={1} />
-                <InstrumentCase id="center-corr-case-2" position={[4, 0.5, 85]} type="Euphonium" level={1} />
-                {children}
-            </group>
+                                                        {/* Instrument Cases scattered in corridors */}
+                                                        {/* Hub corners */}
+                                                        <InstrumentCase id="hub-case-1" position={[-12, 0.5, -22]} type="Trumpet" level={1} />
+                                                        <InstrumentCase id="hub-case-2" position={[12, 0.5, -22]} type="Horn" level={1} />
+                                                        {/* Left Corridor */}
+                                                        <InstrumentCase id="left-corr-case-1" position={[-35, 0.5, 4]} type="Trombone" level={1} />
+                                                        <InstrumentCase id="left-corr-case-2" position={[-65, 0.5, -4]} type="Euphonium" level={1} />
+                                                        {/* Right Corridor */}
+                                                        <InstrumentCase id="right-corr-case-1" position={[35, 0.5, -4]} type="Trumpet" level={1} />
+                                                        <InstrumentCase id="right-corr-case-2" position={[65, 0.5, 4]} type="Horn" level={1} />
+                                                        {/* Center Corridor */}
+                                                        <InstrumentCase id="center-corr-case-1" position={[-4, 0.5, 45]} type="Tuba" level={1} />
+                                                        <InstrumentCase id="center-corr-case-2" position={[4, 0.5, 85]} type="Euphonium" level={1} />
+                                                    </group>
+                                                )}
+                                            </CeilingInstances>
+                                        )}
+                                    </WallInstances>
+                                )}
+                            </WallTorchInstances>
+                        )}
+                    </InstrumentCaseInstances>
+                )}
+            </PillarInstances>
         </ZoneCullingContext.Provider>
     );
 }

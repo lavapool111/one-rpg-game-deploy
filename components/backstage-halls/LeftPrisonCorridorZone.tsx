@@ -40,7 +40,7 @@ export const LeftPrisonCorridorZone = memo(function LeftPrisonCorridorZone() {
                     width={14} length={100} position={[170, 0, 0]} rotation={Math.PI / 2}
                     hasFloor={false} northWall={false} southWall={false} eastWall={false} westWall={false}
                     spawnZone={{
-                        id: 'far_left_extension',
+                        id: 'left_extension_2',
                         label: 'Far Left Extension',
                         triggerPoint: { x: -150, y: 15, z: 185 },
                         enemies: [

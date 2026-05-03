@@ -14,10 +14,12 @@ import { applyOvertonePushback, applyLongToneDamage, updatePoisonDot, PoisonStat
 import { getLigatureStats } from '@/lib/game/inventory';
 import { getSlotMultiplier } from '@/lib/store/playerStore';
 import { EnemyHealthBar } from './EnemyHealthBar';
-import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation, RectangleBoundary } from '@/lib/enemies/enemyMovement';
 import { getTubaDrops } from '@/lib/enemies/enemyDrops';
 import { useEnemyState } from '@/lib/enemies/useEnemyState';
-import { roundToTenths, processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
+import { processEnemyDeath, calculateEnemyHealth, roundToTenths } from '@/lib/enemies/enemyUtils';
+import { getEnemyDefense } from '@/lib/game/stats';
+import { applyFlatDefense } from '@/lib/enemies/damageUtils';
 import { hitboxMat, silverMat } from '@/lib/enemies/enemyMaterials';
 
 // Global counter to limit concurrent tuba initializations
@@ -75,6 +77,8 @@ interface TubaProps {
     localPillars?: Pillar[]; // Pillars relative to the Tuba's parent (e.g., cell walls)
     arenaRadius?: number;
     arenaCenter?: [number, number, number];
+    /** Rectangular boundary for corridors */
+    rectangleBoundary?: RectangleBoundary;
     /** Maximum distance this Tuba can move from spawn point (for confined enemies) */
     maxRangeFromSpawn?: number;
     teleportToCenterOnOOB?: boolean;
@@ -149,7 +153,7 @@ export function TubaInstances({ children }: { children: React.ReactNode }) {
     );
 }
 
-export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath, pillars = [], localPillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], maxRangeFromSpawn, teleportToCenterOnOOB = false, models: propModels }: TubaProps) {
+export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath, pillars = [], localPillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], rectangleBoundary, maxRangeFromSpawn, teleportToCenterOnOOB = false, models: propModels }: TubaProps) {
     const contextModels = useContext(TubaContext);
     const models = propModels || contextModels;
     const hitboxRef = useRef<THREE.Mesh>(null);
@@ -555,19 +559,50 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
                 }
             }
 
-            // Arena boundary collision
-            const cx = arenaCenter ? arenaCenter[0] : 0;
-            const cz = arenaCenter ? arenaCenter[2] : 0;
-            const distFromCenter = Math.sqrt((enemyPos.current.x - cx) ** 2 + (enemyPos.current.z - cz) ** 2);
-            if (distFromCenter > (arenaRadius || 375)) {
-                if (teleportToCenterOnOOB) {
-                    enemyPos.current.x = cx;
-                    enemyPos.current.z = cz;
-                } else {
-                    const angle = Math.atan2(enemyPos.current.z - cz, enemyPos.current.x - cx);
-                    const resetDist = (arenaRadius || 375) * 0.9;
-                    enemyPos.current.x = cx + Math.cos(angle) * resetDist;
-                    enemyPos.current.z = cz + Math.sin(angle) * resetDist;
+            // Boundary collision (Rectangle or Circle)
+            if (rectangleBoundary) {
+                const { centerX, centerZ, width, length, angle } = rectangleBoundary;
+                const dxBoundary = enemyPos.current.x - centerX;
+                const dzBoundary = enemyPos.current.z - centerZ;
+                const cosBoundary = Math.cos(-angle);
+                const sinBoundary = Math.sin(-angle);
+                const localX = dxBoundary * cosBoundary - dzBoundary * sinBoundary;
+                const localZ = dxBoundary * sinBoundary + dzBoundary * cosBoundary;
+                const halfWidth = width / 2;
+                const halfLength = length / 2;
+                let oob = false;
+                let clampedX = localX;
+                let clampedZ = localZ;
+                if (Math.abs(localX) > halfWidth) {
+                    clampedX = Math.sign(localX) * (halfWidth - 0.5);
+                    oob = true;
+                }
+                if (Math.abs(localZ) > halfLength) {
+                    clampedZ = Math.sign(localZ) * (halfLength - 0.5);
+                    oob = true;
+                }
+                if (oob) {
+                    const cosW = Math.cos(angle);
+                    const sinW = Math.sin(angle);
+                    const worldX = clampedX * cosW - clampedZ * sinW;
+                    const worldZ = clampedX * sinW + clampedZ * cosW;
+                    enemyPos.current.x = centerX + worldX;
+                    enemyPos.current.z = centerZ + worldZ;
+                }
+            } else {
+                const cx = arenaCenter ? arenaCenter[0] : 0;
+                const cz = arenaCenter ? arenaCenter[2] : 0;
+                const distFromCenter = Math.sqrt((enemyPos.current.x - cx) ** 2 + (enemyPos.current.z - cz) ** 2);
+                if (distFromCenter > (arenaRadius || 375)) {
+                    if (teleportToCenterOnOOB) {
+                        enemyPos.current.x = cx;
+                        enemyPos.current.z = cz;
+                    } else {
+                        const angle = Math.atan2(enemyPos.current.z - cz, enemyPos.current.x - cx);
+                        const resetDist = (arenaRadius || 375) * 0.9;
+                        enemyPos.current.x = cx + Math.cos(angle) * resetDist;
+                        enemyPos.current.z = cz + Math.sin(angle) * resetDist;
+                    }
                 }
             }
 
@@ -624,21 +659,53 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
                 }
             }
 
-            // Arena boundary
-            const cx = arenaCenter ? arenaCenter[0] : 0;
-            const cz = arenaCenter ? arenaCenter[2] : 0;
-            const distFromCenter = Math.sqrt((enemyPos.current.x - cx) ** 2 + (enemyPos.current.z - cz) ** 2);
-            if (distFromCenter > (arenaRadius || 375)) {
-                if (teleportToCenterOnOOB) {
-                    enemyPos.current.x = cx;
-                    enemyPos.current.z = cz;
+            // Arena boundary (Rectangle or Circle)
+            if (rectangleBoundary) {
+                const { centerX, centerZ, width, length, angle } = rectangleBoundary;
+                const dxBoundary = enemyPos.current.x - centerX;
+                const dzBoundary = enemyPos.current.z - centerZ;
+                const cosBoundary = Math.cos(-angle);
+                const sinBoundary = Math.sin(-angle);
+                const localX = dxBoundary * cosBoundary - dzBoundary * sinBoundary;
+                const localZ = dxBoundary * sinBoundary + dzBoundary * cosBoundary;
+                const halfWidth = width / 2;
+                const halfLength = length / 2;
+                let oob = false;
+                let clampedX = localX;
+                let clampedZ = localZ;
+                if (Math.abs(localX) > halfWidth) {
+                    clampedX = Math.sign(localX) * (halfWidth - 0.5);
+                    oob = true;
+                }
+                if (Math.abs(localZ) > halfLength) {
+                    clampedZ = Math.sign(localZ) * (halfLength - 0.5);
+                    oob = true;
+                }
+                if (oob) {
+                    const cosW = Math.cos(angle);
+                    const sinW = Math.sin(angle);
+                    const worldX = clampedX * cosW - clampedZ * sinW;
+                    const worldZ = clampedX * sinW + clampedZ * cosW;
+                    enemyPos.current.x = centerX + worldX;
+                    enemyPos.current.z = centerZ + worldZ;
                     wanderDirection.current.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
-                } else {
-                    const angle = Math.atan2(enemyPos.current.z - cz, enemyPos.current.x - cx);
-                    const resetDist = (arenaRadius || 375) * 0.9;
-                    enemyPos.current.x = cx + Math.cos(angle) * resetDist;
-                    enemyPos.current.z = cz + Math.sin(angle) * resetDist;
-                    wanderDirection.current.set(-Math.cos(angle), 0, -Math.sin(angle));
+                }
+            } else {
+                const cx = arenaCenter ? arenaCenter[0] : 0;
+                const cz = arenaCenter ? arenaCenter[2] : 0;
+                const distFromCenter = Math.sqrt((enemyPos.current.x - cx) ** 2 + (enemyPos.current.z - cz) ** 2);
+                if (distFromCenter > (arenaRadius || 375)) {
+                    if (teleportToCenterOnOOB) {
+                        enemyPos.current.x = cx;
+                        enemyPos.current.z = cz;
+                        wanderDirection.current.set(Math.random() - 0.5, 0, Math.random() - 0.5).normalize();
+                    } else {
+                        const angle = Math.atan2(enemyPos.current.z - cz, enemyPos.current.x - cx);
+                        const resetDist = (arenaRadius || 375) * 0.9;
+                        enemyPos.current.x = cx + Math.cos(angle) * resetDist;
+                        enemyPos.current.z = cz + Math.sin(angle) * resetDist;
+                        wanderDirection.current.set(-Math.cos(angle), 0, -Math.sin(angle));
+                    }
                 }
             }
 
@@ -664,7 +731,9 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
             takeDamage,
             poisonState,
             activePillars,
-            direction.current
+            direction.current,
+            'tuba',
+            id
         );
 
         // Attack Animation (Jump/Slam visual)
@@ -699,9 +768,13 @@ export const Tuba = memo(function Tuba({ id, initialPosition, level = 1, onDeath
     };
 
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
-        const newHealth = Math.max(0, healthRef.current - amount);
+        // Calculate and apply piecewise flat defense
+        const defensePoints = getEnemyDefense(level);
+        const reducedAmount = applyFlatDefense(amount, defensePoints, 0);
+
+        const newHealth = Math.max(0, healthRef.current - reducedAmount);
         healthRef.current = newHealth;
-        damageNumberRef.current = { value: Number(amount.toFixed(2)), time: Date.now(), type };
+        damageNumberRef.current = { value: Number(reducedAmount.toFixed(2)), time: Date.now(), type };
 
         if (newHealth <= 0 && isAlive) {
             handleDeath();

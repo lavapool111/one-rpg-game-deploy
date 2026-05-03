@@ -2,6 +2,7 @@ import Dexie, { Table } from 'dexie';
 import { Inventory, ReedStrength, LigatureInstance, MouthpieceInstance, CaseInstance, EnchantmentInstance, EnchantmentTier } from '../game/inventory';
 import { PlayerClass } from '../store/playerStore';
 import { AbilityUpgrades } from '../game/abilityUpgrades';
+import { WeaponMeldType } from '../game/inventoryData';
 
 export interface PlayerSave {
     id?: number; // Auto-incremented ID (we usually only keep one save, or the latest)
@@ -10,8 +11,8 @@ export interface PlayerSave {
     health: number;
     xp: number;
     echoes: number;
-    position: { x: number; y: number; z: number };
-    inventory?: Inventory; // Inventory state (includes ligatures, mouthpieces, cases, enchantments)
+    position?: [number, number, number];
+    inventory?: Inventory;
     equippedReed?: ReedStrength | null;
     reedDurability?: number;
     embouchure?: number;
@@ -20,14 +21,25 @@ export interface PlayerSave {
     equippedLigature?: LigatureInstance | null;
     equippedMouthpiece?: MouthpieceInstance | null;
     equippedCase?: CaseInstance | null;
+    ligatureSlot?: number;
+    mouthpieceSlot?: number;
+    caseSlot?: number;
+    reedSlot?: number;
     equippedEnchantments?: Record<EnchantmentTier, EnchantmentInstance | null>;
     enchantmentSlots?: Record<EnchantmentTier, number>;
     attackCounter?: number;
     hasEmpoweringSpeedBonus?: boolean;
+    accessorySlots?: number;
+    critFactor?: number;
+    weaponMeldType?: WeaponMeldType | null;
+    weaponMeldTier?: number;
     playerClass?: PlayerClass;
     playerName?: string;
     abilityUpgrades?: AbilityUpgrades;
-    sessionId?: string; // Unique ID for the current browser session/tab
+    currentAltarIndex?: number;
+    outerBackstageUnlocked?: boolean;
+    hasSeenAltarIntro?: boolean;
+    sessionId?: string;
 }
 
 class GameDatabase extends Dexie {
@@ -59,8 +71,9 @@ export async function saveGame(save: Omit<PlayerSave, 'id' | 'timestamp'>) {
 
         console.log('[DB] New save created:', {
             level: save.level,
-            xp: save.xp,
+            hasSeenAltarIntro: save.hasSeenAltarIntro,
             sessionId: save.sessionId,
+            position: save.position,
             timestamp: new Date(now).toISOString()
         });
 

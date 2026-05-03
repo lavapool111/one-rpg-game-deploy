@@ -1,10 +1,11 @@
 'use client';
 
-import { usePlayerStore } from '@/lib/store';
+import { usePlayerStore, useAccessoryStore } from '@/lib/store';
 import { useEffect, useState, useMemo, memo } from 'react';
 import { getTerms, CLASS_INFO } from '@/lib/store/playerStore';
 import { useShallow } from 'zustand/react/shallow';
 import { useSettingsStore } from '@/lib/store/settingsStore';
+import { WEAPON_TIER_DAMAGE_MULTIPLIERS } from '@/lib/game/inventoryData';
 
 /**
  * PlayerHUD Component
@@ -28,6 +29,8 @@ export const PlayerHUD = memo(function PlayerHUD() {
         lastKillTime,
         playerName,
         playerClass,
+        basicAttackDamage,
+        weaponMeldTier,
     } = usePlayerStore(useShallow(state => ({
         level: state.level,
         health: state.health,
@@ -44,6 +47,8 @@ export const PlayerHUD = memo(function PlayerHUD() {
         lastKillTime: state.lastKillTime,
         playerName: state.playerName,
         playerClass: state.playerClass,
+        basicAttackDamage: state.basicAttackDamage,
+        weaponMeldTier: useAccessoryStore.getState().weaponMeldTier,
     })));
 
     // Local state for smooth cooldown animation
@@ -114,9 +119,9 @@ export const PlayerHUD = memo(function PlayerHUD() {
     const isMobile = useSettingsStore((state) => state.isMobile);
 
     return (
-        <div className={`absolute ${isMobile ? 'top-2 right-2' : 'top-4 right-4'} pointer-events-none z-50 flex flex-col items-end gap-2`}>
+        <div className={`absolute ${isMobile ? 'top-2 right-2 scale-75 origin-top-right' : 'top-4 right-4'} pointer-events-none z-50 flex flex-col items-end gap-2`}>
             {/* Main Stats Panel */}
-            <div className={`bg-black/80 backdrop-blur-md rounded-xl ${isMobile ? 'p-2 min-w-[180px]' : 'p-4 min-w-[240px]'} border border-white/10 shadow-xl`}>
+            <div className={`bg-black/80 backdrop-blur-md rounded-xl ${isMobile ? 'p-2 min-w-[160px]' : 'p-4 min-w-[240px]'} border border-white/10 shadow-xl`}>
 
                 {/* Header: Class & Level */}
                 <div className="flex items-center justify-between mb-3">
@@ -167,23 +172,27 @@ export const PlayerHUD = memo(function PlayerHUD() {
                     </div>
                 </div>
 
-                {/* Stats Grid & Cooldown */}
+                {/* Stats Grid & Cooldown - Simplified on mobile to avoid overlap */}
                 <div className="flex items-end justify-between">
-                    {/* Stats */}
-                    <div className="grid grid-cols-2 gap-2 text-xs">
-                        <div className="bg-white/5 rounded px-2 py-1.5 border border-white/5">
-                            <div className="text-white/40 text-[10px] uppercase">DMG</div>
-                            <div className="text-white font-bold">{damage}</div>
+                    {/* Stats - Hidden on mobile to save vertical space */}
+                    {!isMobile && (
+                        <div className="grid grid-cols-2 gap-2 text-xs">
+                            <div className="bg-white/5 rounded px-2 py-1.5 border border-white/5">
+                                <div className="text-white/40 text-[10px] uppercase">DMG</div>
+                                <div className="flex items-baseline gap-1">
+                                    <div className="text-white font-bold">{Math.floor(basicAttackDamage || damage)}</div>
+                                </div>
+                            </div>
+                            <div className="bg-white/5 rounded px-2 py-1.5 border border-white/5">
+                                <div className="text-white/40 text-[10px] uppercase">SPD</div>
+                                <div className="text-white font-bold">{speed.toFixed(1)}</div>
+                            </div>
+                            <div className="bg-white/5 rounded px-2 py-1.5 border border-white/5 col-span-2">
+                                <div className="text-white/40 text-[10px] uppercase">{terms.embouchure.toUpperCase()}</div>
+                                <div className="text-white font-bold text-yellow-400">LV {embouchure}</div>
+                            </div>
                         </div>
-                        <div className="bg-white/5 rounded px-2 py-1.5 border border-white/5">
-                            <div className="text-white/40 text-[10px] uppercase">SPD</div>
-                            <div className="text-white font-bold">{speed.toFixed(1)}</div>
-                        </div>
-                        <div className="bg-white/5 rounded px-2 py-1.5 border border-white/5 col-span-2">
-                            <div className="text-white/40 text-[10px] uppercase">{terms.embouchure.toUpperCase()}</div>
-                            <div className="text-white font-bold text-yellow-400">LV {embouchure}</div>
-                        </div>
-                    </div>
+                    )}
 
                     {/* Attack Cooldown Indicator */}
                     <div className="relative w-10 h-10 ml-3">

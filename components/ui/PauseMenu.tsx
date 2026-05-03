@@ -8,7 +8,7 @@ import { useEffect, useState } from 'react';
 import { InventoryScreen } from './InventoryScreen';
 import { SettingsScreen } from './SettingsScreen';
 import { saveGame } from '@/lib/db';
-import { getSaveData } from '../game/SaveManager';
+import { getSaveData } from '@/lib/db/saveUtils';
 
 /**
  * PauseMenu Component

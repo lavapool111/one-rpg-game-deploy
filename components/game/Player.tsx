@@ -4,7 +4,7 @@ import { useRef, useEffect, useMemo } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { Group, Vector3 } from 'three';
 import * as THREE from 'three';
-import { usePlayerStore } from '@/lib/store';
+import { usePlayerStore, useSettingsStore } from '@/lib/store';
 
 /**
  * Player Component - Instrument Model
@@ -54,24 +54,52 @@ export function Player({
     const isAttacking = usePlayerStore((state) => state.isAttacking);
     const stopAttack = usePlayerStore((state) => state.stopAttack);
     const playerClass = usePlayerStore((state) => state.playerClass);
+    const isMobile = useSettingsStore((state) => state.isMobile);
 
+    const swayOffset = useRef(new Vector3(0, 0, 0));
+    const prevCameraRotation = useRef(new THREE.Euler().copy(camera.rotation));
     const attackProgress = useRef(0);
     const baseRotation = useRef({ x: -0.2, y: 0.1, z: 0 });
 
     useFrame((state, delta) => {
         if (!groupRef.current) return;
 
+        // Follow camera
         groupRef.current.position.copy(camera.position);
         groupRef.current.rotation.copy(camera.rotation);
 
         if (animRef.current) {
-            animRef.current.position.set(offset[0], offset[1], offset[2]);
+            const time = state.clock.elapsedTime;
+            const actualOffset = isMobile ? [0.15, offset[1], offset[2]] : offset;
+
+            // 1. Idle Breathing (Subtle slow sinus)
+            const breathingBob = Math.sin(time * 0.8) * 0.005;
+            const breathingSway = Math.cos(time * 0.4) * 0.003;
+
+            // 2. Weapon Sway (Trail camera rotation)
+            const deltaRotY = camera.rotation.y - prevCameraRotation.current.y;
+            const deltaRotX = camera.rotation.x - prevCameraRotation.current.x;
+
+            // Influence sway based on look speed
+            swayOffset.current.x = THREE.MathUtils.lerp(swayOffset.current.x, -deltaRotY * 0.5, delta * 5);
+            swayOffset.current.y = THREE.MathUtils.lerp(swayOffset.current.y, deltaRotX * 0.5, delta * 5);
+
+            prevCameraRotation.current.copy(camera.rotation);
+
+            // 3. Update Position & Rotation
+            animRef.current.position.set(
+                actualOffset[0] + swayOffset.current.x + breathingSway,
+                (offset[1] as number) + breathingBob,
+                (offset[2] as number)
+            );
+
             animRef.current.rotation.set(
-                baseRotation.current.x,
-                baseRotation.current.y,
+                baseRotation.current.x + swayOffset.current.y,
+                baseRotation.current.y + swayOffset.current.x,
                 baseRotation.current.z
             );
 
+            // 4. Attack Animation
             if (isAttacking) {
                 attackProgress.current += delta * 8;
                 const attackPhase = Math.sin(attackProgress.current * Math.PI);
@@ -89,7 +117,16 @@ export function Player({
     });
 
     useEffect(() => {
-        // No longer handling global input here, moved to FirstPersonController
+        // Subscribe to lastAttackTime to reset animation progress on every new hit (allowing spam)
+        const unsubscribe = usePlayerStore.subscribe(
+            (state) => state.lastAttackTime,
+            (lastAttackTime) => {
+                if (lastAttackTime > 0) {
+                    attackProgress.current = 0;
+                }
+            }
+        );
+        return () => unsubscribe();
     }, []);
 
     if (!visible) return null;

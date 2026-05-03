@@ -697,10 +697,10 @@ export const AltarRoom = memo(function AltarRoom({ index = 0 }: { index?: number
             // Altar itself
             {
                 id: `${groupId}-central-altar`,
-                minX: -2 * scaleFactor, maxX: 2 * scaleFactor,
-                minZ: cz - 2 * scaleFactor, maxZ: cz + 2 * scaleFactor,
+                minX: -9 * scaleFactor, maxX: 9 * scaleFactor,
+                minZ: cz - 9 * scaleFactor, maxZ: cz + 9 * scaleFactor,
                 minY: 0, maxY: 4.1 * scaleFactor, // Match walkable surface height
-                radius: 2 * scaleFactor, shape: 'cylinder'
+                radius: 9 * scaleFactor, shape: 'cylinder'
             },
             // North Corridor Walls
             {

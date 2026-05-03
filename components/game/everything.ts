@@ -5,6 +5,7 @@ export { Environment } from './Environment';
 export { BandRoom } from './BandRoom';
 export { FirstPersonController, useFirstPersonController } from './FirstPersonController';
 export { SaveManager } from './SaveManager';
+export { SaveDebugger } from './SaveDebugger';
 export { TouchControls } from './TouchControls';
 export { DungeonDoor } from './DungeonDoor';
 

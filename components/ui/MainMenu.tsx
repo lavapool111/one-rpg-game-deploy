@@ -1,10 +1,12 @@
 'use client';
 
 import { useGameStore, usePlayerStore, useSettingsStore } from '@/lib/store';
+import { useAuthStore } from '@/lib/store/authStore';
 import { useInventoryStore } from '@/lib/store/inventoryStore';
 import { useAccessoryStore } from '@/lib/store/accessoryStore';
 import { useEffect, useState, useRef } from 'react';
 import { hasSave, loadGame } from '@/lib/db';
+import { resolveLatestSave } from '@/lib/db/cloudSync';
 import { HowToPlayModal } from './HowToPlayModal';
 import { ControlsModal } from './ControlsModal';
 import { Canvas, useFrame } from '@react-three/fiber';
@@ -42,6 +44,7 @@ export function MainMenu() {
     const resetPlayer = usePlayerStore((state) => state.resetPlayer);
     const loadState = usePlayerStore((state) => state.loadState);
     const isMobile = useSettingsStore((state) => state.isMobile);
+    const { isAuthenticated, user, signInWithGoogle, signOut } = useAuthStore();
     const [isVisible, setIsVisible] = useState(false);
     const [canContinue, setCanContinue] = useState(false);
 
@@ -51,10 +54,27 @@ export function MainMenu() {
         // Fade in on mount
         setTimeout(() => setIsVisible(true), 100);
 
-        // Check for save
-        hasSave().then(exists => {
+        // Sync cloud save before checking hasSave
+        const initSaveState = async () => {
+            try {
+                const localSave = await loadGame();
+                const { save, source } = await resolveLatestSave(localSave);
+                if (source === 'cloud' && save) {
+                    // Cloud save is newer — write it into IndexedDB so loadGame() picks it up
+                    const { saveGame: saveToLocal } = await import('@/lib/db');
+                    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+                    const { id, timestamp, ...rest } = save;
+                    await saveToLocal(rest);
+                    console.log('[MainMenu] Cloud save was newer, synced to local');
+                }
+            } catch (err) {
+                console.warn('[MainMenu] Cloud sync failed or not authenticated:', err);
+            }
+            const exists = await hasSave();
             setCanContinue(exists);
-        });
+        };
+
+        initSaveState();
     }, []);
 
     const handleNewGame = () => {
@@ -141,6 +161,23 @@ export function MainMenu() {
                     <MenuButton onClick={() => console.log('Settings clicked')}>
                         Settings
                     </MenuButton>
+
+                    <div className="h-4" />
+
+                    {isAuthenticated ? (
+                        <div className="flex flex-col gap-2">
+                            <div className="text-blue-400/80 text-xs tracking-widest uppercase mb-1">
+                                Signed in as {user?.user_metadata?.full_name || user?.email}
+                            </div>
+                            <MenuButton onClick={() => signOut()}>
+                                Sign Out
+                            </MenuButton>
+                        </div>
+                    ) : (
+                        <MenuButton onClick={() => signInWithGoogle()}>
+                            Sign In with Google
+                        </MenuButton>
+                    )}
                 </div>
 
                 {/* Footer/Version Info */}

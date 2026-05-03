@@ -6,6 +6,7 @@ import { Trumpet } from './Trumpet';
 import { Trombone } from './Trombone';
 import { usePlayerStore, useGameStore } from '@/lib/store';
 import { Pillar } from '@/lib/game/pillars';
+import { RectangleBoundary } from '@/lib/enemies/enemyMovement';
 
 /**
  * CorridorSpawner Component
@@ -31,6 +32,7 @@ interface Enemy {
     position: [number, number, number];
     level: number;
     maxRangeFromSpawn?: number;
+    rectangleBoundary?: RectangleBoundary;
 }
 
 interface CorridorSpawnerProps {
@@ -131,6 +133,23 @@ export function CorridorSpawner({
         return [x, 1.5, z];
     }, [arenaRadius]);
 
+    // Get rectangle boundary for a corridor
+    const getRectangleBoundary = useCallback((corridor: CorridorName) => {
+        const config = CORRIDORS[corridor];
+        const angle = config.angle;
+        const centerDist = arenaRadius + CORRIDOR_LENGTH / 2;
+        const centerX = Math.sin(angle) * centerDist;
+        const centerZ = Math.cos(angle) * centerDist;
+
+        return {
+            centerX,
+            centerZ,
+            width: CORRIDOR_WIDTH,
+            length: CORRIDOR_LENGTH,
+            angle
+        };
+    }, [arenaRadius]);
+
     // Generate enemies for a specific corridor
     const generateCorridorEnemies = useCallback((corridor: CorridorName): Enemy[] => {
         const newEnemies: Enemy[] = [];
@@ -144,6 +163,7 @@ export function CorridorSpawner({
         // East and West: Level 15 and Level 30 Tubas
         // +x
         if (corridor === 'east') {
+            const boundary = getRectangleBoundary(corridor);
             for (let i = 0; i < MAX_ENEMIES_PER_CORRIDOR; i++) {
                 let level = 0
                 const e = Math.random()
@@ -154,6 +174,7 @@ export function CorridorSpawner({
                     type: 'tuba',
                     position: getCorridorSpawnPosition(corridor),
                     level,
+                    rectangleBoundary: boundary
                 });
             }
             return newEnemies;
@@ -162,6 +183,7 @@ export function CorridorSpawner({
         // -x
 
         if (corridor === 'west') {
+            const boundary = getRectangleBoundary(corridor);
             for (let i = 0; i < 10; i++) {
                 let level = 0
                 const e = Math.random()
@@ -179,6 +201,7 @@ export function CorridorSpawner({
                     type: lissy,
                     position: getCorridorSpawnPosition(corridor),
                     level,
+                    rectangleBoundary: boundary
                 });
             }
             return newEnemies;
@@ -187,6 +210,7 @@ export function CorridorSpawner({
         // North (Forward): Trumpets and Trombones at player level ±3 
         // +z
         if (corridor === 'north') {
+            const boundary = getRectangleBoundary(corridor);
             for (let i = 0; i < MAX_ENEMIES_PER_CORRIDOR; i++) {
                 const levelOffset = Math.floor(Math.random() * 7) - 3; // -3 to +3
                 const level = Math.max(1, playerLevel + levelOffset);
@@ -197,6 +221,7 @@ export function CorridorSpawner({
                     type,
                     position: getCorridorSpawnPosition(corridor),
                     level,
+                    rectangleBoundary: boundary
                 });
             }
             return newEnemies;
@@ -212,19 +237,24 @@ export function CorridorSpawner({
 
     // Helper for staggered spawning
     const staggeredSetEnemies = useCallback((newEnemies: Enemy[]) => {
-        let j = 0;
-        const addNextBatch = () => {
-            setEnemies(prev => {
-                const nextJ = Math.min(j + 2, newEnemies.length);
-                const slice = newEnemies.slice(j, nextJ);
-                j = nextJ;
-                if (j < newEnemies.length) {
-                    requestAnimationFrame(addNextBatch);
-                }
-                return [...prev, ...slice];
-            });
+        let currentIndex = 0;
+        const batchSize = 2;
+
+        const addBatch = () => {
+            if (currentIndex >= newEnemies.length) return;
+
+            const nextIndex = Math.min(currentIndex + batchSize, newEnemies.length);
+            const batch = newEnemies.slice(currentIndex, nextIndex);
+
+            setEnemies(prev => [...prev, ...batch]);
+            currentIndex = nextIndex;
+
+            if (currentIndex < newEnemies.length) {
+                requestAnimationFrame(addBatch);
+            }
         };
-        requestAnimationFrame(addNextBatch);
+
+        requestAnimationFrame(addBatch);
     }, []);
 
     // Check player proximity and spawn/despawn enemies
@@ -318,6 +348,7 @@ export function CorridorSpawner({
                             onDeath={handleEnemyDeath}
                             pillars={pillars}
                             arenaRadius={corridorArenaRadius}
+                            rectangleBoundary={enemy.rectangleBoundary}
                         />
                     );
                 }
@@ -331,6 +362,7 @@ export function CorridorSpawner({
                             onDeath={handleEnemyDeath}
                             pillars={pillars}
                             arenaRadius={corridorArenaRadius}
+                            rectangleBoundary={enemy.rectangleBoundary}
                         />
                     );
                 }
@@ -343,6 +375,7 @@ export function CorridorSpawner({
                         onDeath={handleEnemyDeath}
                         pillars={pillars}
                         arenaRadius={corridorArenaRadius}
+                        rectangleBoundary={enemy.rectangleBoundary}
                     />
                 );
             })}

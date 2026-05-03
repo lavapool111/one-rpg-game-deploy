@@ -181,6 +181,50 @@ const ENEMY_HP_BANDS = [
  */
 const ENEMY_HP_MUL_CACHE: number[] = [0, 1]; // level 1 = 1x
 
+// Enemy Defense bands - Piecewise linear points per level
+const ENEMY_DEFENSE_BANDS = [
+    { maxLevel: 300, points: 0 },
+    { maxLevel: 400, points: 10 },
+    { maxLevel: 500, points: 20 },
+    { maxLevel: 600, points: 30 },
+    { maxLevel: 700, points: 45 },
+    { maxLevel: 800, points: 60 },
+    { maxLevel: 900, points: 90 },
+    { maxLevel: 1000, points: 120 },
+    { maxLevel: 1200, points: 150 },
+    { maxLevel: 10000, points: 300 },
+];
+
+/**
+ * Piecewise linear Defense Points for enemies based on level.
+ * Uses cached lazy-evaluation.
+ */
+const ENEMY_DEFENSE_CACHE: number[] = [0]; // level 0 = 0
+
+export function getEnemyDefense(level: number): number {
+    while (level >= ENEMY_DEFENSE_CACHE.length) {
+        const i = ENEMY_DEFENSE_CACHE.length;
+
+        let points = 0;
+        let prevMaxLevel = 0;
+
+        for (const band of ENEMY_DEFENSE_BANDS) {
+            if (i <= prevMaxLevel) break;
+            const levelsInBand = Math.min(i, band.maxLevel) - prevMaxLevel;
+            points += levelsInBand * band.points;
+            prevMaxLevel = band.maxLevel;
+        }
+
+        if (i > prevMaxLevel) {
+            const lastBand = ENEMY_DEFENSE_BANDS[ENEMY_DEFENSE_BANDS.length - 1];
+            points += (i - prevMaxLevel) * lastBand.points;
+        }
+
+        ENEMY_DEFENSE_CACHE.push(points);
+    }
+    return ENEMY_DEFENSE_CACHE[level];
+}
+
 export function getEnemyHpMultiplier(level: number): number {
     while (level >= ENEMY_HP_MUL_CACHE.length) {
         const i = ENEMY_HP_MUL_CACHE.length;

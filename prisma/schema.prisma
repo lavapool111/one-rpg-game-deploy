@@ -1,0 +1,76 @@
+// =============================================================
+// Final Stage — Prisma Schema
+// =============================================================
+// Connects to Supabase PostgreSQL. The User model references
+// Supabase auth.users via the same UUID. GameSave stores the
+// full PlayerSave blob for cross-device cloud saves.
+// =============================================================
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ----- User (mirrors Supabase auth.users) -----
+model User {
+  id        String   @id @default(uuid()) @db.Uuid
+  email     String   @unique
+  name      String?
+  avatarUrl String?  @map("avatar_url")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  // Relationships
+  scores   Score[]
+  settings Setting[]
+  saves    GameSave[]
+
+  @@map("users")
+}
+
+// ----- Score -----
+model Score {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id") @db.Uuid
+  value     Int
+  level     Int      @default(1)
+  timestamp DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("scores")
+}
+
+// ----- Setting -----
+model Setting {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id") @db.Uuid
+  name      String
+  value     String
+  updatedAt DateTime @default(now()) @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // One setting per user per name
+  @@unique([userId, name])
+  @@index([userId])
+  @@map("settings")
+}
+
+// ----- GameSave (full save blob — maps to PlayerSave interface) -----
+model GameSave {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id") @db.Uuid
+  timestamp DateTime @default(now())
+  data      Json     // Stores the full PlayerSave object as JSON
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, timestamp])
+  @@map("game_saves")
+}

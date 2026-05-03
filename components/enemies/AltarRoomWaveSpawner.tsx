@@ -79,6 +79,7 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
     const waveQuota = useRef(0);
     const lastReinforcementTime = useRef(0);
     const processedDeaths = useRef(new Set<string>());
+    const deathTimestamps = useRef(new Map<string, number>());
 
     // Helper to spawn a single enemy at a random statue
     // Helper to spawn a single enemy at a random statue
@@ -120,6 +121,7 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
         totalSpawnedInWave.current = 0;
         totalDefeatedInWave.current = 0;
         processedDeaths.current.clear();
+        deathTimestamps.current.clear();
 
         const newEnemies: Enemy[] = [];
 
@@ -165,18 +167,22 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
             setEnemies([]); // Clear current first
             let currentIndex = 0;
             const addNextBatch = () => {
-                setEnemies(prev => {
-                    const nextI = Math.min(currentIndex + 2, totalToSpawn);
-                    const slice = newEnemies.slice(currentIndex, nextI);
-                    currentIndex = nextI;
+                if (currentIndex >= totalToSpawn) {
+                    isSpawning.current = false;
+                    return;
+                }
 
-                    if (currentIndex < totalToSpawn) {
-                        requestAnimationFrame(addNextBatch);
-                    } else {
-                        isSpawning.current = false;
-                    }
-                    return [...prev, ...slice];
-                });
+                const nextI = Math.min(currentIndex + 2, totalToSpawn);
+                const slice = newEnemies.slice(currentIndex, nextI);
+
+                setEnemies(prev => [...prev, ...slice]);
+                currentIndex = nextI;
+
+                if (currentIndex < totalToSpawn) {
+                    requestAnimationFrame(addNextBatch);
+                } else {
+                    isSpawning.current = false;
+                }
             };
             requestAnimationFrame(addNextBatch);
         }
@@ -272,14 +278,34 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
                 }
             }
         }
+
+        // GC sweep: purge dead enemies older than 1.5s to prevent zombie component accumulation
+        if (enemies.length > 0 && nowMs % 3 === 0) { // ~every 3rd frame check
+            const deadCount = enemies.filter(e => e.isDead && deathTimestamps.current.has(e.id) && nowMs - deathTimestamps.current.get(e.id)! > 1500).length;
+            if (deadCount > 0) {
+                setEnemies(prev => prev.filter(e => {
+                    if (!e.isDead) return true;
+                    const deathTime = deathTimestamps.current.get(e.id);
+                    if (deathTime && nowMs - deathTime > 1500) {
+                        deathTimestamps.current.delete(e.id);
+                        return false; // Remove this dead enemy
+                    }
+                    return true;
+                }));
+            }
+        }
     });
 
-    // Cleanup for initial wave timer if component unmounts
+    // Cleanup for timers if component unmounts
     useEffect(() => {
         return () => {
             if (initialWaveTimerRef.current) {
                 clearTimeout(initialWaveTimerRef.current);
                 initialWaveTimerRef.current = null;
+            }
+            if (bufferTimerRef.current) {
+                clearTimeout(bufferTimerRef.current);
+                bufferTimerRef.current = null;
             }
         };
     }, []);
@@ -338,14 +364,8 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
                 }, 5000);
             }
         }
-
-        // Cleanup function for the buffer timer
-        return () => {
-            if (bufferTimerRef.current) {
-                clearTimeout(bufferTimerRef.current);
-                bufferTimerRef.current = null;
-            }
-        };
+        
+        // Removed cleanup function that was cancelling the buffer timer when enemies array changed
     }, [enemies, currentWave, spawnWave]); // Dependencies: enemies, currentWave, and spawnWave (which is useCallback)
 
     // Auto-reset room after 1 minute if player stays in room seeing "Ritual Complete"
@@ -473,13 +493,14 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
         // Dedup check OUTSIDE the updater — immune to React StrictMode double-invocation
         if (processedDeaths.current.has(id)) return;
         processedDeaths.current.add(id);
+        deathTimestamps.current.set(id, Date.now());
 
         // Defer removal from the React tree by a few frames
         // This distributes the unmounting overhead across multiple frames.
         requestAnimationFrame(() => {
             requestAnimationFrame(() => {
                 requestAnimationFrame(() => {
-                    // Soft delete: flag as dead to prevent Troika Text EventListener memory leak!
+                    // Soft delete: flag as dead first (allows wave completion check)
                     setEnemies(prev => prev.map(e => e.id === id ? { ...e, isDead: true } : e));
 
                     // Side effects outside the updater (runs exactly once per kill)
@@ -487,6 +508,12 @@ export const AltarRoomWaveSpawner = memo(function AltarRoomWaveSpawner({ index =
                     const store = useGameStore.getState();
                     const remaining = Math.max(0, waveQuota.current - totalDefeatedInWave.current);
                     store.setAltarRoomWaveEnemies(remaining, waveQuota.current);
+
+                    // Hard remove after a short delay to let death animation/particles finish
+                    setTimeout(() => {
+                        setEnemies(prev => prev.filter(e => e.id !== id));
+                        deathTimestamps.current.delete(id);
+                    }, 800);
                 });
             });
         });

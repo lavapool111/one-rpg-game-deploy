@@ -33,6 +33,10 @@ import {
     getMeldStats,
     getMeldTierCost,
     MELD_UNLOCK_LEVEL,
+    WeaponMeldType,
+    WEAPON_TIER_DAMAGE_MULTIPLIERS,
+    getWeaponMeldStats,
+    getWeaponMeldTierCost,
 } from "../game/inventory";
 import { calculateIngredientsXp, ACTION_XP_BASE, XP_MULTIPLIERS } from "../game/xp";
 import { GAME_CONFIG } from "../game/config";
@@ -54,33 +58,42 @@ export function calculateStats(
     embouchure: number = 1,
     slotMultiplier: number = 1,
     caseHealthMultiplier: number = 1,
-    caseSpeedBonus: number = 0,
-    permanentSpeedBonus: number = 0
+    caseSpeedMultiplier: number = 1,
+    permanentSpeedBonus: number = 0,
+    weaponMeldTier: number = 0
 ) {
     const base = getStatsForLevel(level);
     const baseSpeed = GAME_CONFIG.STARTING_SPEED;
     const embouchureCritBonus = (embouchure - 1) * 0.02;
 
+    // Formula: (BaseSpeed * (1 + ReedBonus + EnchantBonus)) + CaseBonusFlat
+    // We treat Reed stats as multipliers (e.g. 1.16), so bonus is stats.speed - 1
+    // caseSpeedMultiplier passed in contains (1 + CaseBonusFlat), so extract bonus.
+
     if (!reed) {
+        const flatBonus = (caseSpeedMultiplier - 1);
+        const finalSpeed = Number((baseSpeed * (1 + permanentSpeedBonus) + flatBonus).toFixed(2));
         return {
             ...base,
             health: Math.floor(base.health * caseHealthMultiplier),
-            speed: baseSpeed + caseSpeedBonus + permanentSpeedBonus,
-            basicAttackDamage: base.damage,
+            speed: finalSpeed,
+            basicAttackDamage: weaponMeldTier > 0 ? Math.floor(base.damage * WEAPON_TIER_DAMAGE_MULTIPLIERS[weaponMeldTier]) : base.damage,
             critChance: embouchureCritBonus,
             defense: 0,
         };
     }
 
     const stats = REED_MULTIPLIERS[reed];
-    const speedBonus = (stats.speed - 1) * slotMultiplier;
-    const totalSpeedMultiplier = 1 + speedBonus;
+    const reedBonus = (stats.speed - 1) * slotMultiplier;
+    const flatBonus = (caseSpeedMultiplier - 1);
+    const finalSpeed = Number((baseSpeed * (1 + reedBonus + permanentSpeedBonus) + flatBonus).toFixed(2));
 
     return {
+        level,
         health: Math.floor(base.health * caseHealthMultiplier),
         damage: base.damage,
-        basicAttackDamage: base.damage,
-        speed: Number(((baseSpeed * totalSpeedMultiplier + caseSpeedBonus) * (1 + permanentSpeedBonus)).toFixed(2)),
+        basicAttackDamage: weaponMeldTier > 0 ? Math.floor(base.damage * WEAPON_TIER_DAMAGE_MULTIPLIERS[weaponMeldTier]) : base.damage,
+        speed: finalSpeed,
         critChance: (stats.crit * slotMultiplier) + embouchureCritBonus,
         superCritChance: ((stats.crit * slotMultiplier) + embouchureCritBonus > 1.0) ? (((stats.crit * slotMultiplier) + embouchureCritBonus) - 1.0) / 10 : 0,
         defense: stats.def * slotMultiplier,
@@ -118,11 +131,16 @@ export interface AccessoryState {
     // Dungeon upgrades
     dungeonTimeBonus: number;
 
+    // Weapon Melding
+    weaponMeldType: WeaponMeldType | null;
+    weaponMeldTier: number;
+
     // Performance caches
     _cachedLigatureBonus: ReturnType<AccessoryState['getLigatureBonus']> | null;
     _cachedMouthpieceBonus: ReturnType<AccessoryState['getMouthpieceBonus']> | null;
     _cachedCaseBonus: ReturnType<AccessoryState['getCaseBonus']> | null;
     _cachedMeldBonus: MeldStatBonus | null;
+    _cachedWeaponMeldBonus: { primary: number; damageMultiplier: number } | null;
     _cachedEnchantmentBonus: ReturnType<AccessoryState['getEnchantmentBonus']> | null;
     _invalidateBonusCaches: () => void;
 
@@ -153,11 +171,15 @@ export interface AccessoryState {
     unequipCase: () => void;
     craftCase: (caseId: CaseId) => boolean;
     upgradeCase: (caseIndex: number) => boolean;
-    getCaseBonus: () => { healthMultiplier: number; speedBonus: number; name: string; isEvolved: boolean };
+    getCaseBonus: () => { healthMultiplier: number; speedMultiplier: number; name: string; isEvolved: boolean };
 
     // Case Melding
     meldCase: (caseIndex: number, meldType: MeldType) => boolean;
     getMeldBonus: () => MeldStatBonus;
+
+    // Weapon Melding
+    meldWeapon: (meldType: WeaponMeldType) => boolean;
+    getWeaponMeldBonus: () => { primary: number; damageMultiplier: number };
 
     // Enchantment Actions
     isEnchantmentSlotUnlocked: (tier: EnchantmentTier) => boolean;
@@ -206,12 +228,12 @@ function getInventoryStore() {
 }
 
 function getCurrentCaseBonuses(state: AccessoryState) {
-    if (!state.equippedCase) return { healthMultiplier: 1, speedBonus: 0 };
+    if (!state.equippedCase) return { healthMultiplier: 1, speedMultiplier: 1 };
     const caseBonus = getCaseStats(state.equippedCase.id, state.equippedCase.level);
     const slotMultiplier = getSlotMultiplier(state.caseSlot);
     return {
         healthMultiplier: 1 + (caseBonus.healthMultiplier - 1) * slotMultiplier,
-        speedBonus: caseBonus.speedBonus * slotMultiplier,
+        speedMultiplier: 1 + (caseBonus.speedBonus * slotMultiplier),
     };
 }
 
@@ -231,13 +253,23 @@ function updatePlayerStats(stats: Partial<{
     maxHealth: number;
     health: number;
     damage: number;
+    basicAttackDamage: number;
     speed: number;
     critChance: number;
     superCritChance: number;
     defense: number;
-    basicAttackDamage: number;
 }>) {
+    const acc = useAccessoryStore.getState();
     const ps = getPlayerStore().getState();
+
+    // Apply weapon meld damage multiplier to basicAttackDamage if present
+    if (stats.basicAttackDamage !== undefined) {
+        const wTier = acc.weaponMeldTier || 0;
+        if (wTier > 0) {
+            stats.basicAttackDamage = Math.floor(stats.basicAttackDamage * WEAPON_TIER_DAMAGE_MULTIPLIERS[wTier]);
+        }
+    }
+
     getPlayerStore().setState({ ...stats, version: ps.version + 1 });
 }
 
@@ -259,12 +291,15 @@ export const useAccessoryStore = create<AccessoryState>()(
         attackCounter: 0,
         hasEmpoweringSpeedBonus: false,
         dungeonTimeBonus: 0,
+        weaponMeldType: null,
+        weaponMeldTier: 0,
         version: 0,
 
         _cachedLigatureBonus: null,
         _cachedMouthpieceBonus: null,
         _cachedCaseBonus: null,
         _cachedMeldBonus: null,
+        _cachedWeaponMeldBonus: null,
         _cachedEnchantmentBonus: null,
 
         _invalidateBonusCaches: () => set({
@@ -272,7 +307,9 @@ export const useAccessoryStore = create<AccessoryState>()(
             _cachedMouthpieceBonus: null,
             _cachedCaseBonus: null,
             _cachedMeldBonus: null,
+            _cachedWeaponMeldBonus: null,
             _cachedEnchantmentBonus: null,
+            version: get().version + 1,
         }),
 
         // ========== REED ==========
@@ -285,7 +322,7 @@ export const useAccessoryStore = create<AccessoryState>()(
             if (!strength) {
                 const caseBonuses = getCurrentCaseBonuses(state);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const baseStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+                const baseStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -321,7 +358,7 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             const caseBonuses = getCurrentCaseBonuses(state);
             const enchantmentBonus = get().getEnchantmentBonus();
-            const newStats = calculateStats(level, strength, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+            const newStats = calculateStats(level, strength, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -350,7 +387,7 @@ export const useAccessoryStore = create<AccessoryState>()(
             const { level, embouchure, health, maxHealth } = getPlayerStats();
             const caseBonuses = getCurrentCaseBonuses(state);
             const enchantmentBonus = get().getEnchantmentBonus();
-            const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+            const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -382,7 +419,7 @@ export const useAccessoryStore = create<AccessoryState>()(
                 const { level, embouchure, health, maxHealth } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+                const newStats = calculateStats(level, null, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -426,7 +463,7 @@ export const useAccessoryStore = create<AccessoryState>()(
 
                 const caseBonuses = getCurrentCaseBonuses(state);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const newStats = calculateStats(ps.level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+                const newStats = calculateStats(ps.level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -566,7 +603,7 @@ export const useAccessoryStore = create<AccessoryState>()(
             const slotMultiplier = getSlotMultiplier(state.mouthpieceSlot);
             const caseBonuses = getCurrentCaseBonuses(state);
             const enchantmentBonus = get().getEnchantmentBonus();
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
             const hpRatio = maxHealth > 0 ? health / maxHealth : 1;
             const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
@@ -590,7 +627,7 @@ export const useAccessoryStore = create<AccessoryState>()(
             const { level, embouchure, health, maxHealth } = getPlayerStats();
             const caseBonuses = getCurrentCaseBonuses(state);
             const enchantmentBonus = get().getEnchantmentBonus();
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
             const hpRatio = maxHealth > 0 ? health / maxHealth : 1;
             const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
@@ -668,7 +705,7 @@ export const useAccessoryStore = create<AccessoryState>()(
                 const { level, embouchure } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
                 updatePlayerStats({
                     critChance: baseStats.critChance + (mouthpieceBonus.critChance * slotMultiplier),
                     superCritChance: (baseStats.critChance + (mouthpieceBonus.critChance * slotMultiplier) > 1.0) ? (baseStats.critChance + (mouthpieceBonus.critChance * slotMultiplier) - 1.0) / 10 : 0,
@@ -708,7 +745,7 @@ export const useAccessoryStore = create<AccessoryState>()(
         setLigatureSlot: (slotIndex) => {
             const state = get();
             if (state.mouthpieceSlot === slotIndex || state.reedSlot === slotIndex) return;
-            set({ ligatureSlot: slotIndex });
+            set({ ligatureSlot: slotIndex, version: state.version + 1 });
             get()._invalidateBonusCaches();
         },
 
@@ -723,7 +760,7 @@ export const useAccessoryStore = create<AccessoryState>()(
                 const { level, embouchure } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 set({ critFactor: 1.5 + mouthpieceBonus.critFactor * slotMultiplier });
                 updatePlayerStats({
@@ -743,7 +780,7 @@ export const useAccessoryStore = create<AccessoryState>()(
                 const { level, embouchure, health, maxHealth } = getPlayerStats();
                 const caseBonuses = getCurrentCaseBonuses(state);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const newStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(slotIndex), caseBonuses.healthMultiplier, caseBonuses.speedBonus, enchantmentBonus.permanentSpeedBonus);
+                const newStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(slotIndex), caseBonuses.healthMultiplier, caseBonuses.speedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -794,8 +831,9 @@ export const useAccessoryStore = create<AccessoryState>()(
 
             const caseBonus = getCaseStats(caseToEquip.id, caseToEquip.level);
             const slotMultiplier = getSlotMultiplier(state.caseSlot);
+            const caseSpeedMultiplier = 1 + (caseBonus.speedBonus * slotMultiplier);
             const enchantmentBonus = get().getEnchantmentBonus();
-            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), 1, 0, enchantmentBonus.permanentSpeedBonus);
+            const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonus.healthMultiplier, caseSpeedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
             let mpCritBonus = 0;
             if (state.equippedMouthpiece) {
@@ -803,16 +841,14 @@ export const useAccessoryStore = create<AccessoryState>()(
                 mpCritBonus = mpStats.critChance * getSlotMultiplier(state.mouthpieceSlot);
             }
 
-            const healthMultiplier = caseBonus.healthMultiplier;
-            const speedBonus = caseBonus.speedBonus * slotMultiplier;
             const hpRatio = maxHealth > 0 ? health / maxHealth : 1;
-            const newHealth = Math.max(1, Math.floor(baseStats.health * healthMultiplier * hpRatio));
+            const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
 
             set({ equippedCase: caseToEquip, version: get().version + 1 });
             updatePlayerStats({
-                maxHealth: Math.floor(baseStats.health * healthMultiplier),
+                maxHealth: baseStats.health,
                 health: newHealth,
-                speed: baseStats.speed + speedBonus,
+                speed: baseStats.speed,
                 critChance: baseStats.critChance + mpCritBonus,
                 superCritChance: (baseStats.critChance + mpCritBonus > 1.0) ? (baseStats.critChance + mpCritBonus - 1.0) / 10 : 0,
                 defense: baseStats.defense,
@@ -909,8 +945,9 @@ export const useAccessoryStore = create<AccessoryState>()(
             if (state.equippedCase?.id === caseToUpgrade.id && state.equippedCase?.level === caseToUpgrade.level) {
                 const caseBonus = getCaseStats(caseToUpgrade.id, caseToUpgrade.level + 1);
                 const slotMultiplier = getSlotMultiplier(state.caseSlot);
+                const caseSpeedMultiplier = 1 + (caseBonus.speedBonus * slotMultiplier);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const baseStats = calculateStats(playerStore.level, state.equippedReed, playerStore.embouchure, getSlotMultiplier(state.reedSlot), caseBonus.healthMultiplier, caseBonus.speedBonus * slotMultiplier, enchantmentBonus.permanentSpeedBonus);
+                const baseStats = calculateStats(playerStore.level, state.equippedReed, playerStore.embouchure, getSlotMultiplier(state.reedSlot), caseBonus.healthMultiplier, caseSpeedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -919,13 +956,13 @@ export const useAccessoryStore = create<AccessoryState>()(
                 }
 
                 const hpRatio = playerStore.maxHealth > 0 ? playerStore.health / playerStore.maxHealth : 1;
-                const newHealth = Math.max(1, Math.floor(baseStats.health * caseBonus.healthMultiplier * hpRatio));
+                const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
 
                 set({ equippedCase: { id: caseToUpgrade.id, level: caseToUpgrade.level + 1 } });
                 updatePlayerStats({
-                    maxHealth: Math.floor(baseStats.health * caseBonus.healthMultiplier),
+                    maxHealth: baseStats.health,
                     health: newHealth,
-                    speed: baseStats.speed + caseBonus.speedBonus * slotMultiplier,
+                    speed: baseStats.speed,
                     critChance: baseStats.critChance + mpCritBonus,
                     defense: baseStats.defense,
                 });
@@ -941,10 +978,10 @@ export const useAccessoryStore = create<AccessoryState>()(
 
         getCaseBonus: () => {
             const state = get();
-            if (!state.equippedCase) return { healthMultiplier: 1, speedBonus: 0, name: '', isEvolved: false };
+            if (!state.equippedCase) return { healthMultiplier: 1, speedMultiplier: 1, name: '', isEvolved: false };
             const caseBonus = getCaseStats(state.equippedCase.id, state.equippedCase.level);
             const slotMultiplier = getSlotMultiplier(state.caseSlot);
-            return { healthMultiplier: caseBonus.healthMultiplier, speedBonus: caseBonus.speedBonus * slotMultiplier, name: caseBonus.name, isEvolved: caseBonus.isEvolved };
+            return { healthMultiplier: caseBonus.healthMultiplier, speedMultiplier: 1 + (caseBonus.speedBonus * slotMultiplier), name: caseBonus.name, isEvolved: caseBonus.isEvolved };
         },
 
         setCaseSlot: (slotIndex) => {
@@ -956,8 +993,9 @@ export const useAccessoryStore = create<AccessoryState>()(
                 const { level, embouchure, health, maxHealth } = getPlayerStats();
                 const caseBonus = getCaseStats(state.equippedCase.id, state.equippedCase.level);
                 const slotMultiplier = getSlotMultiplier(slotIndex);
+                const caseSpeedMultiplier = 1 + (caseBonus.speedBonus * slotMultiplier);
                 const enchantmentBonus = get().getEnchantmentBonus();
-                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), 1, 0, enchantmentBonus.permanentSpeedBonus);
+                const baseStats = calculateStats(level, state.equippedReed, embouchure, getSlotMultiplier(state.reedSlot), caseBonus.healthMultiplier, caseSpeedMultiplier, enchantmentBonus.permanentSpeedBonus);
 
                 let mpCritBonus = 0;
                 if (state.equippedMouthpiece) {
@@ -966,12 +1004,12 @@ export const useAccessoryStore = create<AccessoryState>()(
                 }
 
                 const hpRatio = maxHealth > 0 ? health / maxHealth : 1;
-                const newHealth = Math.max(1, Math.floor(baseStats.health * caseBonus.healthMultiplier * hpRatio));
+                const newHealth = Math.max(1, Math.floor(baseStats.health * hpRatio));
 
                 updatePlayerStats({
-                    maxHealth: Math.floor(baseStats.health * caseBonus.healthMultiplier),
+                    maxHealth: baseStats.health,
                     health: newHealth,
-                    speed: baseStats.speed + caseBonus.speedBonus * slotMultiplier,
+                    speed: baseStats.speed,
                     critChance: baseStats.critChance + mpCritBonus,
                     defense: baseStats.defense,
                 });
@@ -1050,6 +1088,65 @@ export const useAccessoryStore = create<AccessoryState>()(
             return bonus;
         },
 
+        // ========== WEAPON MELDING ==========
+
+        meldWeapon: (meldType) => {
+            const state = get();
+            const playerStore = getPlayerStore().getState();
+            if (playerStore.level < MELD_UNLOCK_LEVEL) return false;
+
+            const invStore = getInventoryStore().getState();
+            const currentTier = state.weaponMeldTier;
+
+            // If weapon already has a different meld type, reject
+            if (state.weaponMeldType && state.weaponMeldType !== meldType) return false;
+
+            // Tier 0 → 1: Free, just choose type
+            if (currentTier === 0) {
+                set({ weaponMeldType: meldType, weaponMeldTier: 1, version: get().version + 1 });
+                // updatePlayerStats will now automatically handle the multiplier
+                updatePlayerStats({ basicAttackDamage: playerStore.damage });
+                get()._invalidateBonusCaches();
+                return true;
+            }
+
+            if (currentTier >= 5) return false;
+
+            const targetTier = currentTier + 1;
+            const cost = getWeaponMeldTierCost(meldType, targetTier);
+
+            for (const ing of cost) {
+                const have = invStore.inventory.materials[ing.itemId as MaterialItemId] || 0;
+                if (have < ing.quantity) return false;
+            }
+
+            const newMaterials = { ...invStore.inventory.materials };
+            for (const ing of cost) { newMaterials[ing.itemId as MaterialItemId] -= ing.quantity; }
+
+            set({ weaponMeldType: meldType, weaponMeldTier: targetTier, version: get().version + 1 });
+            getInventoryStore().setState({ inventory: { ...invStore.inventory, materials: newMaterials } });
+
+            // updatePlayerStats will now automatically handle the multiplier
+            updatePlayerStats({ basicAttackDamage: playerStore.damage });
+
+            get()._invalidateBonusCaches();
+            return true;
+        },
+
+        getWeaponMeldBonus: () => {
+            const state = get();
+            if (state._cachedWeaponMeldBonus) return state._cachedWeaponMeldBonus;
+
+            if (!state.weaponMeldType || state.weaponMeldTier < 1) {
+                const zeroBonus = { primary: 0, damageMultiplier: 1.0 };
+                set({ _cachedWeaponMeldBonus: zeroBonus });
+                return zeroBonus;
+            }
+            const bonus = getWeaponMeldStats(state.weaponMeldType, state.weaponMeldTier);
+            set({ _cachedWeaponMeldBonus: bonus });
+            return bonus;
+        },
+
         // ========== ENCHANTMENT ==========
 
         isEnchantmentSlotUnlocked: (tier) => {
@@ -1108,12 +1205,16 @@ export const useAccessoryStore = create<AccessoryState>()(
             }
 
             if (enchantment.id === 'empowering' && !state.hasEmpoweringSpeedBonus) {
-                const ps = getPlayerStore().getState();
                 set({ hasEmpoweringSpeedBonus: true });
-                updatePlayerStats({ speed: ps.speed * (1 + (enchantmentData.permanentSpeedBonus || 0)) });
+                // We no longer call updatePlayerStats with a direct multiplication here.
+                // Instead, we invalidate caches so recalculateStats (which calls calculateStats) 
+                // will pick up the new permanentSpeedBonus from getEnchantmentBonus().
             }
 
             get()._invalidateBonusCaches();
+            // Trigger a re-calculation in playerStore to apply the new proc state
+            const { usePlayerStore } = require('./playerStore');
+            usePlayerStore.getState().recalculateStats();
         },
 
         unequipEnchantment: (tier) => {
@@ -1179,7 +1280,14 @@ export const useAccessoryStore = create<AccessoryState>()(
                 if (data.euphoniumDefenseBonus) euphoniumDefenseBonus += data.euphoniumDefenseBonus;
                 if (data.trumpetDamageMultiplier) trumpetDamageMultiplier *= data.trumpetDamageMultiplier;
                 if (data.hornRetaliationDamage) hornRetaliationDamage = data.hornRetaliationDamage;
-                if (data.permanentSpeedBonus) permanentSpeedBonus += data.permanentSpeedBonus;
+                if (data.permanentSpeedBonus) {
+                    // Special case for 'empowering' - only apply if already procced
+                    if (arcaneEnchant.id === 'empowering') {
+                        if (state.hasEmpoweringSpeedBonus) permanentSpeedBonus += data.permanentSpeedBonus;
+                    } else {
+                        permanentSpeedBonus += data.permanentSpeedBonus;
+                    }
+                }
                 if (data.procAttackCount) {
                     procAttackCount = data.procAttackCount;
                     healPercent = Math.max(healPercent, data.healPercent || 0);
@@ -1283,6 +1391,8 @@ export const useAccessoryStore = create<AccessoryState>()(
             attackCounter: saved.attackCounter ?? state.attackCounter,
             hasEmpoweringSpeedBonus: saved.hasEmpoweringSpeedBonus ?? state.hasEmpoweringSpeedBonus,
             dungeonTimeBonus: saved.dungeonTimeBonus ?? state.dungeonTimeBonus,
+            weaponMeldType: saved.weaponMeldType ?? state.weaponMeldType,
+            weaponMeldTier: saved.weaponMeldTier ?? state.weaponMeldTier,
             version: state.version + 1,
         })),
     }))

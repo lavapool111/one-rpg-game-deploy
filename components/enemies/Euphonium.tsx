@@ -7,9 +7,9 @@ import * as THREE from 'three';
 import { usePlayerStore, useGameStore, useAccessoryStore } from '@/lib/store';
 import { Merged } from '@react-three/drei';
 import { EnemyHealthBar } from './EnemyHealthBar';
-import { getStatsForLevel, getEnemyHpMultiplier } from '@/lib/game/stats';
-import { calculateBasicAttackDamage, calculateAbilityDamage, applyDefenseMultiplier } from '@/lib/enemies/damageUtils';
-import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { getStatsForLevel, getEnemyHpMultiplier, getEnemyDefense } from '@/lib/game/stats';
+import { calculateBasicAttackDamage, calculateAbilityDamage, applyDefenseMultiplier, applyFlatDefense } from '@/lib/enemies/damageUtils';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation, RectangleBoundary } from '@/lib/enemies/enemyMovement';
 import { getEuphoniumDrops } from '@/lib/enemies/enemyDrops';
 import { useEnemyState } from '@/lib/enemies/useEnemyState';
 import { roundToTenths, processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
@@ -88,6 +88,8 @@ interface EuphoniumProps {
     pillars?: Pillar[];
     arenaRadius?: number;
     arenaCenter?: [number, number, number];
+    /** Rectangular boundary for corridors */
+    rectangleBoundary?: RectangleBoundary;
     /** Maximum distance this Euphonium can move from spawn point (for confined enemies) */
     maxRangeFromSpawn?: number;
     teleportToCenterOnOOB?: boolean;
@@ -160,7 +162,7 @@ export function EuphoniumInstances({ children }: { children: React.ReactNode }) 
     );
 }
 
-export const Euphonium = memo(({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], maxRangeFromSpawn, teleportToCenterOnOOB = false, models: propModels }: EuphoniumProps) => {
+export const Euphonium = memo(({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], rectangleBoundary, maxRangeFromSpawn, teleportToCenterOnOOB = false, models: propModels }: EuphoniumProps) => {
     const contextModels = useContext(EuphoniumContext);
     const models = propModels || contextModels;
     const groupRef = useRef<Group>(null);
@@ -431,6 +433,7 @@ export const Euphonium = memo(({ id, initialPosition, level = 1, onDeath, pillar
             pillars,
             arenaCenter: arenaCenter || [0, 0, 0] as unknown as [number, number, number],
             arenaRadius: arenaRadius || 375,
+            rectangleBoundary,
             teleportToCenterOnOOB
         });
 
@@ -506,14 +509,20 @@ export const Euphonium = memo(({ id, initialPosition, level = 1, onDeath, pillar
             takeDamage,
             poisonState,
             pillars,
-            direction.current
+            direction.current,
+            'euphonium',
+            id
         );
     });
 
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
-        // Apply Shield Resistance
+        // 1. Calculate and apply piecewise flat defense
+        const defensePoints = getEnemyDefense(level);
+        const amountAfterFlat = applyFlatDefense(amount, defensePoints, 0);
+
+        // 2. Apply Shield Resistance (if active)
         const effectiveResistance = isShieldActive ? SHIELD_RESISTANCE : 0;
-        const finalDamage = applyDefenseMultiplier(amount, effectiveResistance);
+        const finalDamage = applyDefenseMultiplier(amountAfterFlat, effectiveResistance);
 
         const newHealth = Math.max(0, healthRef.current - finalDamage);
         healthRef.current = newHealth;

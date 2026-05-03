@@ -13,8 +13,8 @@ let DeepWallColor = "#444444";
 export const DeepVaultTrialRoom = memo(function DeepVaultTrialRoom() {
     return (
         <ZoneCulled zone="deep_vault_lower">
-            {/* The Trial Room starts precisely where the Deep Vault Prison left off at local Z = 240 */}
-            <group position={[0, 0, 240]}>
+            {/* The Trial Room starts precisely where the Deep Vault Prison left off at local Z = 120 (relative to Part 2) */}
+            <group position={[0, 0, 120]}>
 
                 {/* 1. STAIRWELL DOWN: Drops 20 feet from Y=0 to Y=-20 */}
                 <Stairs

@@ -90,7 +90,10 @@ export function CulledPointLight({
 
         // Distance check (use squared distance to avoid sqrt)
         if (distSq > cullDistSq) {
-            if (lightRef.current) lightRef.current.visible = false;
+            if (lightRef.current) {
+                lightRef.current.visible = false;
+                lightRef.current.intensity = 0;
+            }
             isVisibleRef.current = false;
             return;
         }
@@ -104,7 +107,10 @@ export function CulledPointLight({
         const shouldShow = dot > -0.3;
 
         if (lightRef.current) {
-            lightRef.current.visible = shouldShow;
+            lightRef.current.visible = true;
+            // Using intensity = 0 instead of visible = false prevents Three.js 
+            // from constantly recompiling shaders when the camera turns.
+            lightRef.current.intensity = shouldShow ? intensity : 0;
         }
         isVisibleRef.current = shouldShow;
     });
@@ -276,6 +282,54 @@ export function Pillar({
     );
 }
 
+// ============== WALL INSTANCES ==============
+export const WallContext = createContext<any>(null);
+
+export function WallInstances({ children }: { children: (instances: any) => React.ReactNode }) {
+    const meshes = useMemo(() => {
+        return {
+            wall: new THREE.Mesh(
+                new THREE.BoxGeometry(1, 1, 1),
+                new THREE.MeshStandardMaterial({ roughness: 0.9 })
+            ),
+        };
+    }, []);
+
+    return (
+        <Merged meshes={meshes}>
+            {(instances) => (
+                <WallContext.Provider value={instances}>
+                    {children(instances)}
+                </WallContext.Provider>
+            )}
+        </Merged>
+    );
+}
+
+// ============== CEILING INSTANCES ==============
+export const CeilingContext = createContext<any>(null);
+
+export function CeilingInstances({ children }: { children: (instances: any) => React.ReactNode }) {
+    const meshes = useMemo(() => {
+        return {
+            ceiling: new THREE.Mesh(
+                new THREE.PlaneGeometry(1, 1),
+                new THREE.MeshStandardMaterial({ roughness: 0.9, side: THREE.DoubleSide })
+            ),
+        };
+    }, []);
+
+    return (
+        <Merged meshes={meshes}>
+            {(instances) => (
+                <CeilingContext.Provider value={instances}>
+                    {children(instances)}
+                </CeilingContext.Provider>
+            )}
+        </Merged>
+    );
+}
+
 // ============== ARCH ==============
 export interface ArchProps {
     position: [number, number, number];
@@ -297,6 +351,7 @@ export function Arch({
     depth = 2,
     color = STONE_COLOR,
 }: ArchProps) {
+    const wallModels = useContext(WallContext);
     const pillarWidth = width * 0.15;
     const archRadius = (width - pillarWidth * 2) / 2; // Inner radius of arch
     const legHeight = height - archRadius; // Height of legs (below arch curve)
@@ -305,14 +360,26 @@ export function Arch({
         <group position={position} rotation={[0, rotation, 0]}>
             {/* Left pillar */}
             <mesh position={[-width / 2 + pillarWidth / 2, legHeight / 2, 0]}>
-                <boxGeometry args={[pillarWidth, legHeight, depth]} />
-                <meshStandardMaterial color={color} roughness={0.85} />
+                {wallModels ? (
+                    <wallModels.wall scale={[pillarWidth, legHeight, depth]} color={color} />
+                ) : (
+                    <>
+                        <boxGeometry args={[pillarWidth, legHeight, depth]} />
+                        <meshStandardMaterial color={color} roughness={0.85} />
+                    </>
+                )}
             </mesh>
 
             {/* Right pillar */}
             <mesh position={[width / 2 - pillarWidth / 2, legHeight / 2, 0]}>
-                <boxGeometry args={[pillarWidth, legHeight, depth]} />
-                <meshStandardMaterial color={color} roughness={0.85} />
+                {wallModels ? (
+                    <wallModels.wall scale={[pillarWidth, legHeight, depth]} color={color} />
+                ) : (
+                    <>
+                        <boxGeometry args={[pillarWidth, legHeight, depth]} />
+                        <meshStandardMaterial color={color} roughness={0.85} />
+                    </>
+                )}
             </mesh>
 
             {/* Curved arch top constructed from segments (voussoirs) to be hollow */}
@@ -343,8 +410,14 @@ export function Arch({
                     >
                         {/* Main Block */}
                         <mesh>
-                            <boxGeometry args={[pillarWidth, segmentLength, depth]} />
-                            <meshStandardMaterial color={STONE_DARK} roughness={0.9} />
+                            {wallModels ? (
+                                <wallModels.wall scale={[pillarWidth, segmentLength, depth]} color={STONE_DARK} />
+                            ) : (
+                                <>
+                                    <boxGeometry args={[pillarWidth, segmentLength, depth]} />
+                                    <meshStandardMaterial color={STONE_DARK} roughness={0.9} />
+                                </>
+                            )}
                         </mesh>
 
                         {/* Carving Detail (Inset Cross Pattern) */}
@@ -395,6 +468,32 @@ export interface WallTorchProps {
     lightDistance?: number;
 }
 
+export const WallTorchContext = createContext<any>(null);
+
+export function WallTorchInstances({ children }: { children: (instances: any) => React.ReactNode }) {
+    const meshes = useMemo(() => {
+        return {
+            bracket: new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.3, 0.6), new THREE.MeshStandardMaterial({ color: METAL_COLOR, roughness: 0.7, metalness: 0.3 })),
+            handle: new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.15, 1.2, 6), new THREE.MeshStandardMaterial({ color: WOOD_COLOR, roughness: 0.9 })),
+            flame: new THREE.Mesh(new THREE.SphereGeometry(0.25, 6, 6), new THREE.MeshStandardMaterial({
+                color: TORCH_FLAME_COLOR,
+                emissive: TORCH_FLAME_COLOR,
+                emissiveIntensity: 3
+            })),
+        };
+    }, []);
+
+    return (
+        <Merged castShadow receiveShadow meshes={meshes}>
+            {(instances) => (
+                <WallTorchContext.Provider value={instances}>
+                    {children(instances)}
+                </WallTorchContext.Provider>
+            )}
+        </Merged>
+    );
+}
+
 /**
  * Wall-mounted Torch with optional point light
  * Light is disabled by default for performance - only enable on key torches
@@ -407,29 +506,43 @@ export function WallTorch({
     lightColor = TORCH_FLAME_COLOR,
     lightDistance = 25,
 }: WallTorchProps) {
+    const models = useContext(WallTorchContext) as any;
+
     return (
         <group position={position} rotation={[0, rotation, 0]}>
             {/* Bracket */}
-            <mesh position={[0, 0, 0.3]}>
-                <boxGeometry args={[0.3, 0.3, 0.6]} />
-                <meshStandardMaterial color={METAL_COLOR} roughness={0.7} metalness={0.3} />
-            </mesh>
+            {models ? (
+                <models.bracket position={[0, 0, 0.3]} />
+            ) : (
+                <mesh position={[0, 0, 0.3]}>
+                    <boxGeometry args={[0.3, 0.3, 0.6]} />
+                    <meshStandardMaterial color={METAL_COLOR} roughness={0.7} metalness={0.3} />
+                </mesh>
+            )}
 
             {/* Torch handle */}
-            <mesh position={[0, 0.8, 0.5]}>
-                <cylinderGeometry args={[0.1, 0.15, 1.2, 6]} />
-                <meshStandardMaterial color={WOOD_COLOR} roughness={0.9} />
-            </mesh>
+            {models ? (
+                <models.handle position={[0, 0.8, 0.5]} />
+            ) : (
+                <mesh position={[0, 0.8, 0.5]}>
+                    <cylinderGeometry args={[0.1, 0.15, 1.2, 6]} />
+                    <meshStandardMaterial color={WOOD_COLOR} roughness={0.9} />
+                </mesh>
+            )}
 
             {/* Flame (emissive sphere - always visible) */}
-            <mesh position={[0, 1.5, 0.5]}>
-                <sphereGeometry args={[0.25, 6, 6]} />
-                <meshStandardMaterial
-                    color={lightColor}
-                    emissive={lightColor}
-                    emissiveIntensity={3}
-                />
-            </mesh>
+            {models ? (
+                <models.flame position={[0, 1.5, 0.5]} color={lightColor} emissive={lightColor} />
+            ) : (
+                <mesh position={[0, 1.5, 0.5]}>
+                    <sphereGeometry args={[0.25, 6, 6]} />
+                    <meshStandardMaterial
+                        color={lightColor}
+                        emissive={lightColor}
+                        emissiveIntensity={3}
+                    />
+                </mesh>
+            )}
 
             {/* Point light - only rendered when hasLight=true, uses CulledPointLight for culling */}
             {hasLight && (

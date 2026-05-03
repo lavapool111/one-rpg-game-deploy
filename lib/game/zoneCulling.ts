@@ -22,7 +22,8 @@ export type DungeonZone =
     | 'center_room'
     | 'stairwell'
     | 'underground_room'
-    | 'left_extension'       // Left Room South Extension + Prison Cells
+    | 'left_extension'       // Left Room South Extension + Prison Cells (Part 1)
+    | 'left_extension_2'     // Left Room South Extension + Prison Cells (Part 2)
     | 'hallway_extension'
     | 'left_branch'          // Left Branch Corridor + Shaft
     | 'left_room_upper'      // Third/Fourth platforms, Upper Corridor, Upper Vault
@@ -30,7 +31,8 @@ export type DungeonZone =
     | 'west_corridor'
     | 'west_vault'
     | 'metal_door_vault'
-    | 'deep_vault_prison'
+    | 'deep_vault_prison_1'
+    | 'deep_vault_prison_2'
     | 'deep_vault_lower'
     | 'hub_descent';
 
@@ -61,7 +63,8 @@ const ZONE_BOUNDS: [DungeonZone, ZoneBounds][] = [
     // Underground areas (Y <= -15)
     ['west_vault', { minX: -123, maxX: -96, minZ: 349, maxZ: 371, maxY: -15 }],
     ['west_corridor', { minX: -98, maxX: -23, minZ: 354, maxZ: 366, maxY: -15 }],
-    ['deep_vault_prison', { minX: -15, maxX: 15, minZ: 432, maxZ: 675, maxY: -15 }],
+    ['deep_vault_prison_1', { minX: -15, maxX: 15, minZ: 432, maxZ: 560, maxY: -15 }],
+    ['deep_vault_prison_2', { minX: -15, maxX: 15, minZ: 550, maxZ: 675, maxY: -15 }],
 
     // Hub Descent — passages + antechamber behind hub north wall
     ['hub_descent', { minX: -15, maxX: 15, minZ: -86, maxZ: -24 }],
@@ -97,9 +100,9 @@ const ZONE_BOUNDS: [DungeonZone, ZoneBounds][] = [
 const ZONE_VISIBILITY: Record<DungeonZone, DungeonZone[]> = {
     hub: ['hub', 'left_corridor', 'right_corridor', 'center_corridor', 'hub_descent'],
     center_corridor: ['hub', 'center_corridor', 'center_room', 'stairwell'],
-    left_corridor: ['hub', 'left_corridor', 'left_room'],
+    left_corridor: ['hub', 'left_corridor', 'left_room', 'left_extension', 'left_extension_2'],
     right_corridor: ['hub', 'right_corridor', 'right_room'],
-    left_room: ['left_corridor', 'left_room', 'left_extension', 'left_room_upper'],
+    left_room: ['left_corridor', 'left_room', 'left_extension', 'left_extension_2', 'left_room_upper'],
     right_room: ['right_corridor', 'right_room', 'right_stairwell', 'right_underground'],
     right_stairwell: ['right_room', 'right_stairwell', 'right_underground'],
     right_underground: ['right_stairwell', 'right_underground'],
@@ -109,11 +112,12 @@ const ZONE_VISIBILITY: Record<DungeonZone, DungeonZone[]> = {
     // When ZoneCulled wrappers are nested (e.g., circular_room inside hallway_extension
     // inside underground_room), ALL parent wrappers must be visible for the child to render.
     underground_room: ['stairwell', 'underground_room', 'hallway_extension', 'left_branch'],
-    left_extension: ['left_room', 'left_extension', 'left_branch'],
+    left_extension: ['left_room', 'left_extension', 'left_extension_2', 'left_branch', 'left_corridor'],
+    left_extension_2: ['left_room', 'left_extension', 'left_extension_2', 'left_branch', 'left_corridor'],
     // hallway_extension is nested inside underground_room wrapper
     hallway_extension: ['underground_room', 'hallway_extension', 'circular_room'],
     // left_branch is nested inside left_extension wrapper
-    left_branch: ['left_extension', 'left_branch', 'underground_room'],
+    left_branch: ['left_extension', 'left_extension_2', 'left_branch', 'underground_room'],
     left_room_upper: ['left_room', 'left_room_upper'],
     // circular_room is nested inside hallway_extension → underground_room
     circular_room: ['underground_room', 'hallway_extension', 'circular_room', 'west_corridor', 'metal_door_vault'],
@@ -122,9 +126,10 @@ const ZONE_VISIBILITY: Record<DungeonZone, DungeonZone[]> = {
     // west_vault is nested inside west_corridor → circular_room → ...
     west_vault: ['underground_room', 'hallway_extension', 'circular_room', 'west_corridor', 'west_vault'],
     // metal_door_vault is nested inside circular_room → hallway_extension → underground_room
-    metal_door_vault: ['underground_room', 'hallway_extension', 'circular_room', 'metal_door_vault', 'deep_vault_prison'],
-    deep_vault_prison: ['underground_room', 'hallway_extension', 'circular_room', 'metal_door_vault', 'deep_vault_prison', 'deep_vault_lower'],
-    deep_vault_lower: ['underground_room', 'hallway_extension', 'circular_room', 'deep_vault_prison', 'deep_vault_lower'],
+    metal_door_vault: ['underground_room', 'hallway_extension', 'circular_room', 'metal_door_vault', 'deep_vault_prison_1'],
+    deep_vault_prison_1: ['underground_room', 'hallway_extension', 'circular_room', 'metal_door_vault', 'deep_vault_prison_1', 'deep_vault_prison_2'],
+    deep_vault_prison_2: ['underground_room', 'hallway_extension', 'circular_room', 'metal_door_vault', 'deep_vault_prison_1', 'deep_vault_prison_2', 'deep_vault_lower'],
+    deep_vault_lower: ['underground_room', 'hallway_extension', 'circular_room', 'metal_door_vault', 'deep_vault_prison_1', 'deep_vault_prison_2', 'deep_vault_lower'],
     hub_descent: ['hub', 'hub_descent'],
 };
 
@@ -166,8 +171,10 @@ export function getVisibleZones(playerZone: DungeonZone | null): Set<DungeonZone
 
 /**
  * Check if a specific zone should be visible given the player's current zone.
+ * Safety: If the targetZone is unknown (not in the adjacency map), default to visible.
  */
-export function isZoneVisible(playerZone: DungeonZone | null, targetZone: DungeonZone): boolean {
+export function isZoneVisible(playerZone: DungeonZone | null, targetZone: string): boolean {
     if (playerZone === null) return true; // Fallback: always visible
-    return VISIBILITY_SETS[playerZone].has(targetZone);
+    if (!VISIBILITY_SETS[targetZone as DungeonZone]) return true; // Safety: unknown zones always visible
+    return VISIBILITY_SETS[playerZone].has(targetZone as DungeonZone);
 }

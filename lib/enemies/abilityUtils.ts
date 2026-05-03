@@ -1,6 +1,6 @@
 import { Vector3, Group } from 'three';
 import { usePlayerStore, useInventoryStore, useGameStore } from '@/lib/store';
-import { calculateAbilityDamage } from '@/lib/enemies/damageUtils';
+import { calculateAbilityDamage, getEnemyDamageMultiplier } from '@/lib/enemies/damageUtils';
 import { checkLineOfSight } from '@/lib/game/pillars';
 import { getFloorHeightAt } from '@/lib/game/stairCollision';
 import { Pillar } from '@/lib/game/pillars';
@@ -56,6 +56,15 @@ export function applyOvertonePushback(
     return false;
 }
 
+// Lazy-load to avoid circular dependencies
+let _cachedAccessoryStore: any = null;
+function getAccessoryStore() {
+    if (!_cachedAccessoryStore) {
+        _cachedAccessoryStore = require('@/lib/store/accessoryStore').useAccessoryStore;
+    }
+    return _cachedAccessoryStore;
+}
+
 /**
  * Handles Long Tone damage application including range checks, LOS, DOT application, and knockback.
  */
@@ -68,7 +77,9 @@ export function applyLongToneDamage(
     takeDamage: (amount: number, type?: 'normal' | 'crit' | 'superCrit') => void,
     poisonStateRef: { current: PoisonState },
     pillars: Pillar[],
-    faceDirection?: Vector3
+    faceDirection?: Vector3,
+    enemyType?: string,
+    enemyId?: string
 ) {
     if (!isLongToneActive) return;
 
@@ -91,14 +102,22 @@ export function applyLongToneDamage(
             );
 
             if (hasLOS) {
-                const accStore = require('@/lib/store/accessoryStore').useAccessoryStore.getState();
+                const accStore = getAccessoryStore().getState();
+
+                // Get type-based multiplier (e.g. versus Trumpets, Tubas)
+                const typeMultiplier = getEnemyDamageMultiplier({ enemyType, id: enemyId }, accStore);
+
                 const { damage: rawDamage, type: dmgType } = calculateAbilityDamage(
                     playerState.damage,
                     playerState.critChance,
                     accStore.critFactor,
-                    abilityStats
+                    abilityStats,
+                    0.15,
+                    accStore.weaponMeldType === 'plated' ? accStore.getWeaponMeldBonus().primary : 0
                 );
-                const finalDamage = Math.max(0, rawDamage);
+
+                // Apply type horizontal multiplier
+                const finalDamage = Math.max(0, rawDamage * typeMultiplier);
 
                 if (finalDamage > 0) {
                     takeDamage(finalDamage, dmgType);

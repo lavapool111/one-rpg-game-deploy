@@ -7,8 +7,9 @@ import * as THREE from 'three';
 import { usePlayerStore, useGameStore } from '@/lib/store';
 import { Merged } from '@react-three/drei';
 import { EnemyHealthBar } from './EnemyHealthBar';
-import { getStatsForLevel } from '@/lib/game/stats';
-import { applyEnemyMovement, shouldUpdateEnemyFrame, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { getStatsForLevel, getEnemyHpMultiplier, getEnemyDefense } from '@/lib/game/stats';
+import { calculateBasicAttackDamage, calculateAbilityDamage, applyDefenseMultiplier, applyFlatDefense } from '@/lib/enemies/damageUtils';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation, RectangleBoundary } from '@/lib/enemies/enemyMovement';
 import { getTromboneDrops } from '@/lib/enemies/enemyDrops';
 import { useEnemyState } from '@/lib/enemies/useEnemyState';
 import { roundToTenths, processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
@@ -74,6 +75,8 @@ interface TromboneProps {
     pillars?: Pillar[];
     arenaRadius?: number;
     arenaCenter?: [number, number, number];
+    /** Rectangular boundary for corridors */
+    rectangleBoundary?: RectangleBoundary;
     teleportToCenterOnOOB?: boolean;
     models?: any;
 }
@@ -147,7 +150,7 @@ export function TromboneInstances({ children }: { children: React.ReactNode }) {
     );
 }
 
-export const Trombone = memo(function Trombone({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], teleportToCenterOnOOB = false, models: propModels }: TromboneProps) {
+export const Trombone = memo(function Trombone({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], rectangleBoundary, teleportToCenterOnOOB = false, models: propModels }: TromboneProps) {
     const contextModels = useContext(TromboneContext);
     const models = propModels || contextModels;
     const groupRef = useRef<Group>(null);
@@ -371,6 +374,7 @@ export const Trombone = memo(function Trombone({ id, initialPosition, level = 1,
                     pillars,
                     arenaCenter,
                     arenaRadius,
+                    rectangleBoundary,
                     teleportToCenterOnOOB
                 });
             }
@@ -393,6 +397,7 @@ export const Trombone = memo(function Trombone({ id, initialPosition, level = 1,
                 pillars,
                 arenaCenter,
                 arenaRadius,
+                rectangleBoundary,
                 teleportToCenterOnOOB
             });
 
@@ -445,7 +450,9 @@ export const Trombone = memo(function Trombone({ id, initialPosition, level = 1,
             takeDamage,
             poisonState,
             pillars,
-            direction.current
+            direction.current,
+            'trombone',
+            id
         );
     });
 
@@ -466,9 +473,13 @@ export const Trombone = memo(function Trombone({ id, initialPosition, level = 1,
     };
 
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
-        const newHealth = Math.max(0, healthRef.current - amount);
+        // Calculate and apply piecewise flat defense
+        const defensePoints = getEnemyDefense(level);
+        const reducedAmount = applyFlatDefense(amount, defensePoints, 0);
+
+        const newHealth = Math.max(0, healthRef.current - reducedAmount);
         healthRef.current = newHealth;
-        damageNumberRef.current = { value: Number(amount.toFixed(2)), time: Date.now(), type };
+        damageNumberRef.current = { value: Number(reducedAmount.toFixed(2)), time: Date.now(), type };
 
         // Check for death
         if (newHealth <= 0 && isAlive) {

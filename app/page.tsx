@@ -3,7 +3,7 @@
 import { Canvas } from '@react-three/fiber';
 import { Stats } from '@react-three/drei';
 import { Suspense, useEffect, useMemo, useRef, useState } from 'react';
-import { BandRoom, FirstPersonController, Player, useFirstPersonController, SaveManager, TouchControls } from '@/components/game/everything';
+import { BandRoom, FirstPersonController, Player, useFirstPersonController, SaveManager, SaveDebugger, TouchControls } from '@/components/game/everything';
 import { AltarManager } from '@/components/game/AltarManager';
 import { OuterBackstage } from '@/components/game/OuterBackstage';
 import { EnemySpawner, CorridorSpawner } from '@/components/enemies/everything';
@@ -45,9 +45,13 @@ export default function Home() {
   // Sync audio settings with AudioManager
   useAudioSettings();
 
-  // Detect device on mount
+  // Detect device and reset config on mount
   useEffect(() => {
     detectDevice();
+
+    // Failsafe: Ensure normal config is active when starting the main game
+    const { setActiveConfig } = require('@/lib/game/config');
+    setActiveConfig('normal');
   }, [detectDevice]);
 
   // Canvas dpr: Lower on mobile/low quality for performance
@@ -200,6 +204,7 @@ export default function Home() {
 
       {/* Auto-Save Manager */}
       <SaveManager />
+      <SaveDebugger />
 
       {/* 3D Scene */}
       <Canvas
@@ -222,7 +227,7 @@ export default function Home() {
                         eyeLevel={1.5}
                         arenaRadius={activeArenaRadius}
                         collisionMargin={5}
-                        enabled={simulationActive && !isMobile}
+                        enabled={simulationActive}
                         pillars={currentLocation === 'band_room' ? pillarConfig.pillars : []}
                         pillarCollisionPadding={currentLocation === 'band_room' ? pillarConfig.collisionPadding : 0}
                         sensitivity={mouseSensitivity}

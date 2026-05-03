@@ -5,9 +5,9 @@ import * as THREE from 'three';
 import { usePlayerStore, useGameStore, useAccessoryStore } from '@/lib/store';
 import { Merged } from '@react-three/drei';
 import { EnemyHealthBar } from './EnemyHealthBar';
-import { getStatsForLevel, getEnemyHpMultiplier } from '@/lib/game/stats';
-import { calculateBasicAttackDamage, calculateAbilityDamage, applyDefenseMultiplier } from '@/lib/enemies/damageUtils';
-import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { getStatsForLevel, getEnemyHpMultiplier, getEnemyDefense } from '@/lib/game/stats';
+import { calculateBasicAttackDamage, calculateAbilityDamage, applyDefenseMultiplier, applyFlatDefense } from '@/lib/enemies/damageUtils';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, checkZoneLineOfSight, registerEnemyPosition, unregisterEnemyPosition, applySeparation, RectangleBoundary } from '@/lib/enemies/enemyMovement';
 import { getFrenchHornDrops } from '@/lib/enemies/enemyDrops';
 import { useEnemyState } from '@/lib/enemies/useEnemyState';
 import { processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
@@ -65,6 +65,7 @@ interface FrenchHornProps {
     pillars?: Pillar[];
     arenaRadius?: number;
     arenaCenter?: [number, number, number];
+    rectangleBoundary?: RectangleBoundary;
     teleportToCenterOnOOB?: boolean;
     models?: any;
 }
@@ -141,7 +142,7 @@ export function FrenchHornInstances({ children }: { children: React.ReactNode })
     );
 }
 
-export const FrenchHorn = memo(function FrenchHorn({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], teleportToCenterOnOOB = false, models: propModels }: FrenchHornProps) {
+export const FrenchHorn = memo(function FrenchHorn({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], rectangleBoundary, teleportToCenterOnOOB = false, models: propModels }: FrenchHornProps) {
     const contextModels = useContext(FrenchHornContext);
     const models = propModels || contextModels;
     const groupRef = useRef<Group>(null);
@@ -303,6 +304,7 @@ export const FrenchHorn = memo(function FrenchHorn({ id, initialPosition, level 
             pillars,
             arenaCenter: arenaCenter || [0, 0, 0] as unknown as [number, number, number],
             arenaRadius: arenaRadius || 375,
+            rectangleBoundary,
             teleportToCenterOnOOB
         });
 
@@ -374,7 +376,9 @@ export const FrenchHorn = memo(function FrenchHorn({ id, initialPosition, level 
             takeDamage,
             poisonState,
             pillars,
-            direction.current
+            direction.current,
+            'french_horn',
+            id
         );
 
         // Visuals: Pulse scale when using ability or buffed
@@ -391,8 +395,12 @@ export const FrenchHorn = memo(function FrenchHorn({ id, initialPosition, level 
 
     // Take Damage
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
-        // Apply Defense Buff
-        const reducedAmount = applyDefenseMultiplier(amount, defenseBuff);
+        // 1. Calculate and apply piecewise flat defense
+        const defensePoints = getEnemyDefense(level);
+        const amountAfterFlat = applyFlatDefense(amount, defensePoints, 0);
+
+        // 2. Apply temporary Defense Buff (if active)
+        const reducedAmount = applyDefenseMultiplier(amountAfterFlat, defenseBuff);
 
         const newHealth = Math.max(0, healthRef.current - reducedAmount);
         healthRef.current = newHealth;

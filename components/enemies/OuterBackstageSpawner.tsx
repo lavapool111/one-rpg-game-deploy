@@ -144,18 +144,23 @@ export function OuterBackstageSpawner({ enabled = true }: OuterBackstageSpawnerP
     }, []);
 
     const addEnemiesStaggered = useCallback((newEnemies: Enemy[]) => {
-        let j = 0;
+        let currentIndex = 0;
         const batchSize = 2;
+
         const addBatch = () => {
-            setEnemies(prev => {
-                const slice = newEnemies.slice(j, j + batchSize);
-                j += batchSize;
-                if (j < newEnemies.length) {
-                    requestAnimationFrame(addBatch);
-                }
-                return [...prev, ...slice];
-            });
+            if (currentIndex >= newEnemies.length) return;
+
+            const nextIndex = Math.min(currentIndex + batchSize, newEnemies.length);
+            const batch = newEnemies.slice(currentIndex, nextIndex);
+
+            setEnemies(prev => [...prev, ...batch]);
+            currentIndex = nextIndex;
+
+            if (currentIndex < newEnemies.length) {
+                requestAnimationFrame(addBatch);
+            }
         };
+
         requestAnimationFrame(addBatch);
     }, []);
 

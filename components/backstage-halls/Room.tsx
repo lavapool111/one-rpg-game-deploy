@@ -4,6 +4,7 @@ import React, { memo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { StoneTileFloor } from './StoneTileFloor';
 import { WALL_HEIGHT, WALL_COLOR } from './BackstageHalls';
+import { WallContext, CeilingContext } from './DungeonDecorations';
 import { SpawnZoneProps, registerSpawnZone, unregisterSpawnZone } from '@/lib/game/spawnZoneRegistry';
 
 export interface RoomProps {
@@ -46,7 +47,6 @@ export interface RoomProps {
 
     /** Spawn zone config — registers this room as an enemy spawn area */
     spawnZone?: SpawnZoneProps;
-
     /** Child elements to render inside the room */
     children?: React.ReactNode;
 }
@@ -71,6 +71,8 @@ export const Room = memo(function Room({
     spawnZone,
     children
 }: RoomProps) {
+    const wallModels = React.useContext(WallContext);
+    const ceilingModels = React.useContext(CeilingContext);
     const groupRef = useRef<THREE.Group>(null);
 
     // Register spawn zone on mount
@@ -130,6 +132,15 @@ export const Room = memo(function Room({
 
         // Solid wall
         if (wallSpec === true || wallSpec === undefined) {
+            if (wallModels) {
+                return (
+                    <wallModels.wall
+                        position={[xOffset, height / 2, zOffset]}
+                        scale={isEastWest ? [1, height, wallWidth] : [wallWidth, height, 1]}
+                        color={color}
+                    />
+                );
+            }
             return (
                 <mesh position={[xOffset, height / 2, zOffset]}>
                     <boxGeometry args={isEastWest ? [1, height, wallWidth] : [wallWidth, height, 1]} />
@@ -160,8 +171,17 @@ export const Room = memo(function Room({
                         zOffset + (isEastWest ? -wallWidth / 2 + sidePanelWidth / 2 : 0)
                     ]}
                 >
-                    <boxGeometry args={isEastWest ? [1, height, sidePanelWidth] : [sidePanelWidth, height, 1]} />
-                    <meshStandardMaterial color={color} roughness={0.9} />
+                    {wallModels ? (
+                        <wallModels.wall
+                            scale={isEastWest ? [1, height, sidePanelWidth] : [sidePanelWidth, height, 1]}
+                            color={color}
+                        />
+                    ) : (
+                        <>
+                            <boxGeometry args={isEastWest ? [1, height, sidePanelWidth] : [sidePanelWidth, height, 1]} />
+                            <meshStandardMaterial color={color} roughness={0.9} />
+                        </>
+                    )}
                 </mesh>
 
                 {/* Right/Bottom Panel */}
@@ -172,8 +192,17 @@ export const Room = memo(function Room({
                         zOffset + (isEastWest ? wallWidth / 2 - sidePanelWidth / 2 : 0)
                     ]}
                 >
-                    <boxGeometry args={isEastWest ? [1, height, sidePanelWidth] : [sidePanelWidth, height, 1]} />
-                    <meshStandardMaterial color={color} roughness={0.9} />
+                    {wallModels ? (
+                        <wallModels.wall
+                            scale={isEastWest ? [1, height, sidePanelWidth] : [sidePanelWidth, height, 1]}
+                            color={color}
+                        />
+                    ) : (
+                        <>
+                            <boxGeometry args={isEastWest ? [1, height, sidePanelWidth] : [sidePanelWidth, height, 1]} />
+                            <meshStandardMaterial color={color} roughness={0.9} />
+                        </>
+                    )}
                 </mesh>
 
                 {/* Lintel (Top piece above the door to close the gap) */}
@@ -186,8 +215,17 @@ export const Room = memo(function Room({
                             zOffset
                         ]}
                     >
-                        <boxGeometry args={isEastWest ? [1, height - 15, actualOpening] : [actualOpening, height - 15, 1]} />
-                        <meshStandardMaterial color={color} roughness={0.9} />
+                        {wallModels ? (
+                            <wallModels.wall
+                                scale={isEastWest ? [1, height - 15, actualOpening] : [actualOpening, height - 15, 1]}
+                                color={color}
+                            />
+                        ) : (
+                            <>
+                                <boxGeometry args={isEastWest ? [1, height - 15, actualOpening] : [actualOpening, height - 15, 1]} />
+                                <meshStandardMaterial color={color} roughness={0.9} />
+                            </>
+                        )}
                     </mesh>
                 )}
             </group>
@@ -205,10 +243,19 @@ export const Room = memo(function Room({
 
             {/* Ceiling */}
             {hasCeiling && (
-                <mesh position={[0, height, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <planeGeometry args={[width, length]} />
-                    <meshStandardMaterial color={color} roughness={0.9} side={THREE.DoubleSide} />
-                </mesh>
+                ceilingModels ? (
+                    <ceilingModels.ceiling
+                        position={[0, height, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        scale={[width, length, 1]}
+                        color={color}
+                    />
+                ) : (
+                    <mesh position={[0, height, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                        <planeGeometry args={[width, length]} />
+                        <meshStandardMaterial color={color} roughness={0.9} side={THREE.DoubleSide} />
+                    </mesh>
+                )
             )}
 
             {/* North Wall (-Z) */}

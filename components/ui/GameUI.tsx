@@ -175,16 +175,27 @@ export function GameUI() {
             {/* Altar Lore Overlay */}
             <AltarIntroScreen />
 
-            {/* Mobile Pause Button - Top Left */}
+            {/* Mobile Nav - Top Left */}
             {gameState === 'playing' && isMobile && (
-                <button
-                    onClick={() => setGameState('paused')}
-                    className="fixed top-4 left-4 z-50 w-10 h-10 bg-black/60 backdrop-blur-md rounded-full border border-white/20 flex items-center justify-center text-white shadow-lg active:scale-95"
-                >
-                    <span className="text-xl">⏸️</span>
-                </button>
-            )
-            }
+                <div className="fixed top-4 left-4 z-[60] flex gap-3 pointer-events-auto">
+                    <button
+                        onClick={() => setGameState('paused')}
+                        className="w-10 h-10 bg-black/60 backdrop-blur-md rounded-full border border-white/20 flex items-center justify-center text-white shadow-lg active:scale-95"
+                    >
+                        <span className="text-xl">⏸️</span>
+                    </button>
+                    <button
+                        onClick={() => {
+                            setOpenInventoryOnPause(true);
+                            setGameState('paused');
+                            document.exitPointerLock?.();
+                        }}
+                        className="w-10 h-10 bg-indigo-900/60 backdrop-blur-md rounded-full border border-indigo-400/40 flex items-center justify-center text-white shadow-lg active:scale-95"
+                    >
+                        <span className="text-lg">🎒</span>
+                    </button>
+                </div>
+            )}
 
             {/* Player HUD & Combat Controls - Staggered unmount to avoid CPU spikes */}
             {showHUD && (

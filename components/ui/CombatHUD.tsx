@@ -155,7 +155,7 @@ export function CombatHUD() {
   };
 
   return (
-    <div className={`absolute bottom-8 pointer-events-auto z-50 transition-all duration-300 ${isMobile ? 'right-4' : 'right-8'} flex gap-3 items-end`}>
+    <div className={`absolute ${isMobile ? 'bottom-4 right-4' : 'bottom-8 right-8'} pointer-events-auto z-50 transition-all duration-300 flex gap-3 items-end`}>
       {/* Ability 1 Button - Long Tone/Sustained Bow */}
       <div className="flex flex-col items-center">
         <button
@@ -290,7 +290,7 @@ function MobileAttackButton() {
 
   return (
     <button
-      className="relative w-20 h-20 rounded-full flex items-center justify-center border-4 transition-all duration-200 bg-red-600/80 border-red-400 active:bg-red-700 active:scale-90 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
+      className="relative w-16 h-16 rounded-full flex items-center justify-center border-4 transition-all duration-200 bg-red-600/80 border-red-400 active:bg-red-700 active:scale-90 shadow-[0_0_15px_rgba(239,68,68,0.4)]"
       onTouchStart={(e) => {
         e.preventDefault();
         attack();

@@ -13,7 +13,7 @@ export function TouchControls() {
     const setInputSprint = usePlayerStore((state) => state.setInputSprint);
 
     return (
-        <div className="absolute inset-0 z-50 pointer-events-none select-none touch-none overflow-hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
+        <div className="absolute inset-0 z-40 pointer-events-none select-none touch-none overflow-hidden" style={{ paddingBottom: 'env(safe-area-inset-bottom, 0px)' }}>
             {/* Left Side — Virtual Joystick + Jump */}
             <div className="absolute bottom-0 left-0 w-1/2 h-full pointer-events-auto">
                 <VirtualJoystick

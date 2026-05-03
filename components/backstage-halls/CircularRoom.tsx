@@ -153,6 +153,8 @@ export const CircularRoom = memo(function CircularRoom({
         return new THREE.CircleGeometry(radius, segments);
     }, [radius, segments]);
 
+    const lastWorldPos = useRef(new THREE.Vector3());
+
     // Register floor as a walkable surface for collision
     const surfaceId = `circular-room-${position.join('-')}`;
     useEffect(() => {
@@ -166,6 +168,10 @@ export const CircularRoom = memo(function CircularRoom({
             groupRef.current.updateMatrixWorld(true);
             const worldPos = new THREE.Vector3();
             groupRef.current.getWorldPosition(worldPos);
+
+            // Only update if position actually changed
+            if (worldPos.distanceTo(lastWorldPos.current) < 0.01) return;
+            lastWorldPos.current.copy(worldPos);
 
             // Approximate circular floor as AABB
             const surface: WalkableSurface = {

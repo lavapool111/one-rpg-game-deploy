@@ -104,8 +104,31 @@ export function BandRoom({
     const spotShadowFrameCount = useRef(0);
     const [isArenaVisible, setIsArenaVisible] = useState(true);
 
-    // Animate spotlights with view-based culling
+    // Animate spotlights with view-based culling and handle arena visibility
     useFrame((state) => {
+        // --- 1. Arena Visibility Culling ---
+        // Check if player is in the main arena (culling optimization) - use squared distance
+        const playerPos = usePlayerStore.getState().position;
+        const distFromCenterSq = playerPos[0] * playerPos[0] + playerPos[2] * playerPos[2];
+        
+        // Only cull the Band Room when the player is actually in the Outer Backstage ring (radius 570).
+        // Prevent culling if the player is in the northern gap (Altar Room) or southern gap (Dungeon),
+        // because those corridors have a direct line of sight back to the Band Room.
+        const playerAngle = Math.atan2(playerPos[2], playerPos[0]);
+        const wrappedAngle = playerAngle < 0 ? playerAngle + 2 * Math.PI : playerAngle;
+        
+        const inNorthernGap = wrappedAngle > Math.PI / 4 + 0.15 && wrappedAngle < 3 * Math.PI / 4 - 0.15;
+        const inSouthernGap = wrappedAngle > 5 * Math.PI / 4 + 0.15 && wrappedAngle < 7 * Math.PI / 4 - 0.15;
+        
+        // If they are deep enough to be in the ring AND NOT in the gaps, they are inside the ring walls.
+        const isInOuterBackstage = distFromCenterSq > 565 * 565 && !inNorthernGap && !inSouthernGap;
+        const shouldBeVisible = !isInOuterBackstage;
+
+        if (shouldBeVisible !== isArenaVisible) {
+            setIsArenaVisible(shouldBeVisible);
+        }
+
+        // --- 2. Spotlight Animation & Culling ---
         if (!animatedLights && spotlightRefs.current.length === 0) return;
 
         // Throttle spotlight animation to every 2nd frame (slow sine wave, imperceptible)
@@ -116,18 +139,10 @@ export function BandRoom({
         spotShadowFrameCount.current++;
         const isShadowFrame = spotShadowFrameCount.current % 5 === 0;
 
-        // Check if player is in the main arena (culling optimization) - use squared distance
-        const playerPos = usePlayerStore.getState().position;
-        const distFromCenterSq = playerPos[0] * playerPos[0] + playerPos[2] * playerPos[2];
+
         const arenaThresholdSq = radius * radius;
         const isInArenaInner = distFromCenterSq < (radius - 25) * (radius - 25);
         const isInArenaOuter = distFromCenterSq < (radius + 150) * (radius + 150);
-
-        // Cull entire arena when player is deep in Outer Backstage ring (> 420 from origin)
-        const shouldBeVisible = distFromCenterSq < 420 * 420;
-        if (shouldBeVisible !== isArenaVisible) {
-            setIsArenaVisible(shouldBeVisible);
-        }
 
         // Get camera direction for view-based culling
         state.camera.getWorldDirection(cameraDir.current);

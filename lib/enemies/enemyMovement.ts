@@ -1,6 +1,6 @@
 import { Vector3 } from 'three';
 import { isValidDungeonPosition } from '@/lib/game/collision';
-import { getFloorHeightAt } from '@/lib/game/stairCollision';
+import { getFloorHeightAt, isCollidingWithObstacle } from '@/lib/game/stairCollision';
 import { Pillar } from '@/lib/game/pillars';
 
 // --- Enemy Position Registry (Spatial Hash) ---
@@ -170,17 +170,43 @@ export function applySeparation(
                     const overlap = minDist - dist;
                     const pushX = (diffX / dist) * overlap * strength;
                     const pushZ = (diffZ / dist) * overlap * strength;
-                    currentPos.x += pushX;
-                    currentPos.z += pushZ;
+
+                    // Validate new position against dungeon collision
+                    const targetX = currentPos.x + pushX;
+                    const targetZ = currentPos.z + pushZ;
+                    if (isValidDungeonPosition(targetX, targetZ, 1.0)) {
+                        currentPos.x = targetX;
+                        currentPos.z = targetZ;
+                    } else {
+                        // Slide check
+                        if (isValidDungeonPosition(targetX, currentPos.z, 1.0)) {
+                            currentPos.x = targetX;
+                        }
+                        if (isValidDungeonPosition(currentPos.x, targetZ, 1.0)) {
+                            currentPos.z = targetZ;
+                        }
+                    }
                 } else if (distSq <= 0.001) {
-                    // Exactly overlapping — push in a random direction
+                    // Exactly overlapping — push in a random direction if valid
                     const angle = Math.random() * Math.PI * 2;
-                    currentPos.x += Math.cos(angle) * minDist * 0.5;
-                    currentPos.z += Math.sin(angle) * minDist * 0.5;
+                    const tx = currentPos.x + Math.cos(angle) * minDist * 0.5;
+                    const tz = currentPos.z + Math.sin(angle) * minDist * 0.5;
+                    if (isValidDungeonPosition(tx, tz, 1.0)) {
+                        currentPos.x = tx;
+                        currentPos.z = tz;
+                    }
                 }
             }
         }
     }
+}
+
+export interface RectangleBoundary {
+    centerX: number;
+    centerZ: number;
+    width: number; // Lateral dimension (left-right)
+    length: number; // Axial dimension (forward-back)
+    angle: number; // Rotation in radians
 }
 
 export interface EnemyMovementParams {
@@ -193,6 +219,7 @@ export interface EnemyMovementParams {
     pillars: Pillar[];
     arenaCenter: [number, number, number];
     arenaRadius: number;
+    rectangleBoundary?: RectangleBoundary;
     teleportToCenterOnOOB?: boolean;
 }
 
@@ -210,6 +237,7 @@ export function applyEnemyMovement({
     pillars,
     arenaCenter,
     arenaRadius,
+    rectangleBoundary,
     teleportToCenterOnOOB = false
 }: EnemyMovementParams): { didCollide: boolean } {
     let didCollide = false;
@@ -240,9 +268,32 @@ export function applyEnemyMovement({
             }
         }
     } else {
-        // Normal Movement (Band Room)
-        currentPos.x = newX;
-        currentPos.z = newZ;
+        const oldX = currentPos.x;
+        const oldZ = currentPos.z;
+
+        // Obstacle collision check (e.g. Altar stone)
+        if (isCollidingWithObstacle(newX, currentPos.y - (bodyHeight / 2), newZ, bodyRadius, bodyHeight)) {
+            // Check if only X move is valid
+            const xOnlyValid = !isCollidingWithObstacle(newX, currentPos.y - (bodyHeight / 2), oldZ, bodyRadius, bodyHeight);
+            const zOnlyValid = !isCollidingWithObstacle(oldX, currentPos.y - (bodyHeight / 2), newZ, bodyRadius, bodyHeight);
+
+            if (xOnlyValid) {
+                currentPos.x = newX;
+                currentPos.z = oldZ;
+            } else if (zOnlyValid) {
+                currentPos.x = oldX;
+                currentPos.z = newZ;
+            } else {
+                // Revert both
+                currentPos.x = oldX;
+                currentPos.z = oldZ;
+                didCollide = true;
+            }
+        } else {
+            // No collision
+            currentPos.x = newX;
+            currentPos.z = newZ;
+        }
     }
 
     // 3. Apply Gravity (Floor Height) - Optimized: only check if we actually moved or if in a vertical zone
@@ -299,24 +350,71 @@ export function applyEnemyMovement({
         }
     }
 
-    // 5. Arena boundary collision
-    const cx = arenaCenter[0];
-    const cz = arenaCenter[2];
-    const dx = currentPos.x - cx;
-    const dz = currentPos.z - cz;
-    const distFromCenterSq = dx * dx + dz * dz;
-    const arenaRadiusSq = arenaRadius * arenaRadius;
+    // 5. Boundary collision (Rectangle or Circle)
+    if (rectangleBoundary) {
+        const { centerX, centerZ, width, length, angle } = rectangleBoundary;
 
-    if (distFromCenterSq > arenaRadiusSq) {
-        didCollide = true;
-        if (teleportToCenterOnOOB) {
-            currentPos.x = cx;
-            currentPos.z = cz;
-        } else {
-            const angle = Math.atan2(dz, dx);
-            const resetDist = arenaRadius * 0.9;
-            currentPos.x = cx + Math.cos(angle) * resetDist;
-            currentPos.z = cz + Math.sin(angle) * resetDist;
+        // Transform current position to rectangle's local coordinate system
+        const dx = currentPos.x - centerX;
+        const dz = currentPos.z - centerZ;
+
+        // Rotate to local space
+        const cos = Math.cos(-angle);
+        const sin = Math.sin(-angle);
+        const localX = dx * cos - dz * sin;
+        const localZ = dx * sin + dz * cos;
+
+        const halfWidth = width / 2;
+        const halfLength = length / 2;
+
+        let oob = false;
+        let clampedX = localX;
+        let clampedZ = localZ;
+
+        if (Math.abs(localX) > halfWidth) {
+            clampedX = Math.sign(localX) * (halfWidth - 0.5);
+            oob = true;
+        }
+        if (Math.abs(localZ) > halfLength) {
+            clampedZ = Math.sign(localZ) * (halfLength - 0.5);
+            oob = true;
+        }
+
+        if (oob) {
+            didCollide = true;
+            if (teleportToCenterOnOOB) {
+                currentPos.x = centerX;
+                currentPos.z = centerZ;
+            } else {
+                // Transform back to world space
+                const cosW = Math.cos(angle);
+                const sinW = Math.sin(angle);
+                const worldX = clampedX * cosW - clampedZ * sinW;
+                const worldZ = clampedX * sinW + clampedZ * cosW;
+                currentPos.x = centerX + worldX;
+                currentPos.z = centerZ + worldZ;
+            }
+        }
+    } else {
+        // Standard Arena boundary collision (Circle)
+        const cx = arenaCenter[0];
+        const cz = arenaCenter[2];
+        const dx = currentPos.x - cx;
+        const dz = currentPos.z - cz;
+        const distFromCenterSq = dx * dx + dz * dz;
+        const arenaRadiusSq = arenaRadius * arenaRadius;
+
+        if (distFromCenterSq > arenaRadiusSq) {
+            didCollide = true;
+            if (teleportToCenterOnOOB) {
+                currentPos.x = cx;
+                currentPos.z = cz;
+            } else {
+                const angle = Math.atan2(dz, dx);
+                const resetDist = arenaRadius * 0.9;
+                currentPos.x = cx + Math.cos(angle) * resetDist;
+                currentPos.z = cz + Math.sin(angle) * resetDist;
+            }
         }
     }
 

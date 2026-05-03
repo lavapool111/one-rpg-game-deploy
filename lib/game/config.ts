@@ -50,7 +50,7 @@ export const NORMAL_CONFIG: GameConfig = {
     STARTING_ECHOES: 0,
     STARTING_EMBOUCHURE: 1,
     STARTING_SPEED: 7.5, // Default for now, can be changed easily
-    STARTING_JUMP_FORCE: 18, // Optimized for snappier jumping.
+    STARTING_JUMP_FORCE: 18.2, // Optimized for 4.1u total peak height (1.5 eyeLevel + 2.6 jump height)
     GRAVITY: 60, // Optimized for slightly faster jumping.
     SPRINT_FACTOR: 2,
     DISABLE_ALTAR_GATES: false,
@@ -124,7 +124,7 @@ export const BACKSTAGE_HALLS_CONFIG: GameConfig = {
 // --- Altar Room Demo ---
 export const ALTAR_ROOM_CONFIG: GameConfig = {
     // High level for Altar testing
-    STARTING_LEVEL: 1000000,
+    STARTING_LEVEL: 1,
 
     // Long time for testing
     BASE_DUNGEON_TIME: 1800,

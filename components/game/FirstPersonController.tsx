@@ -96,6 +96,10 @@ export function FirstPersonController({
 
     // Velocity vectors (reused to avoid garbage collection)
     const velocity = useRef(new Vector3());
+    const bobTimer = useRef(0);
+    const landingDip = useRef(0);
+    const lastGrounded = useRef(true);
+    const baseFovRef = useRef(75);
     const direction = useRef(new Vector3());
 
     // Jump physics state
@@ -226,12 +230,9 @@ export function FirstPersonController({
         }, 300);
     }, []); // Empty deps = run once on mount
 
-    const performAttack = useCallback(() => {
+    const performRaycastAttack = useCallback(() => {
         const playerStore = usePlayerStore.getState();
         const accStore = useAccessoryStore.getState();
-
-        // Trigger player store attack (sets animation state)
-        playerStore.attack();
 
         // Perform raycast for hit detection
         raycaster.current.setFromCamera(pointer.current, camera);
@@ -271,7 +272,21 @@ export function FirstPersonController({
                 enemy.userData.onHit(dmg, dmgType);
             }
         }
-    }, [camera, pillars, gl]);
+    }, [camera, pillars, scene]); // Removed gl, added scene
+
+    // Listen for attack triggers in the store (from mobile button or desktop)
+    useEffect(() => {
+        if (!enabled || gameState !== 'playing') return;
+
+        return usePlayerStore.subscribe(
+            state => state.lastAttackTime,
+            (newTime) => {
+                if (newTime > 0) {
+                    performRaycastAttack();
+                }
+            }
+        );
+    }, [enabled, gameState, performRaycastAttack]);
 
 
 
@@ -282,8 +297,17 @@ export function FirstPersonController({
 
         // Attack Trigger (Enter)
         if (event.key === 'Enter') {
-            performAttack();
+            usePlayerStore.getState().attack();
             event.preventDefault();
+        }
+
+        // Manual Fail (F) - ONLY in Altar Room
+        if (event.code === 'KeyF') {
+            const gameStore = useGameStore.getState();
+            if (gameStore.isInAltarRoom) {
+                gameStore.failAltarRun();
+                return;
+            }
         }
 
         keys.current.add(event.code);
@@ -302,7 +326,7 @@ export function FirstPersonController({
             if (!enabled || !hasLock) return;
 
             if (event.button === 0) { // Left Click
-                performAttack();
+                usePlayerStore.getState().attack();
             }
         };
 
@@ -412,6 +436,8 @@ export function FirstPersonController({
             playerState.resetInputLook();
         }
 
+        const accStore = useAccessoryStore.getState();
+
         // Calculate movement direction
         direction.current.set(0, 0, 0);
 
@@ -472,12 +498,21 @@ export function FirstPersonController({
 
             // Apply speed modifier to the provided speed prop (which represents calculated store stats)
             // This ensures HUD speed and movement speed are perfectly synchronized.
-            const playerSpeedStat = speed;
+            // 1. Calculate base speed from player stats
+            const basePlayerSpeed = speed;
             const isSprintingFinal = isSprinting || mobileSprint;
 
-            // Sprint Jump Boost: 1.15x extra speed if jumping while sprinting (rewarding aerial movement)
+            // 2. Apply Sprinting
+            const sprintMultiplier = isSprintingFinal ? GAME_CONFIG.SPRINT_FACTOR : 1.0;
+
+            // 3. Apply Status Effects (Slows/Stuns)
+            const statusEffectMultiplier = speedModifier;
+
+            // 4. Apply Sprint Jump Boost
             const sprintJumpFactor = (isSprintingFinal && !isGrounded.current) ? 1.05 : 1.0;
-            const currentSpeed = (isSprintingFinal ? playerSpeedStat * GAME_CONFIG.SPRINT_FACTOR : playerSpeedStat) * speedModifier * sprintJumpFactor;
+
+            // Final Combined speed
+            const currentSpeed = basePlayerSpeed * sprintMultiplier * statusEffectMultiplier * sprintJumpFactor;
 
             velocity.current.copy(direction.current).multiplyScalar(currentSpeed * safeDelta);
 
@@ -591,9 +626,12 @@ export function FirstPersonController({
             }
         } // End of horizontal movement block
 
+        // Calculate jump force from basic config (starting force)
+        const targetJumpForce = GAME_CONFIG.STARTING_JUMP_FORCE;
+
         // Initiate jump if grounded and Space pressed
         if (wantsJump && isGrounded.current) {
-            verticalVelocity.current = GAME_CONFIG.STARTING_JUMP_FORCE;
+            verticalVelocity.current = targetJumpForce;
             isGrounded.current = false;
         }
 
@@ -603,13 +641,18 @@ export function FirstPersonController({
         const dynamicFloorY = getFloorHeightAt(newPosition.x, newPosition.z, camera.position.y, stepTolerance, currentLocation);
         const currentFloorLevel = eyeLevel + dynamicFloorY; // Eye level above the floor
 
-        // Apply gravity
+        // Apply gravity (Symplectic Euler: position with current velocity, THEN apply gravity)
+        // This order is critical — applying gravity before position causes frame-rate dependent
+        // jump height (e.g. 4.1u at 60fps but only ~2u at 12fps).
         if (!isGrounded.current) {
-            verticalVelocity.current -= GAME_CONFIG.GRAVITY * safeDelta;
+            // 1. Move position using current velocity (before gravity reduces it)
             newPosition.y = camera.position.y + verticalVelocity.current * safeDelta;
 
-            // Check for landing on floor or stairs
-            if (newPosition.y <= currentFloorLevel) {
+            // 2. Then apply gravity for next frame
+            verticalVelocity.current -= GAME_CONFIG.GRAVITY * safeDelta;
+
+            // Check for landing on floor or stairs - Only land if we are moving DOWNWARDS
+            if (verticalVelocity.current <= 0 && newPosition.y <= currentFloorLevel) {
                 newPosition.y = currentFloorLevel;
                 verticalVelocity.current = 0;
                 isGrounded.current = true;
@@ -626,6 +669,7 @@ export function FirstPersonController({
             }
         }
 
+
         // ========== PARKOUR FALL RESPAWN ==========
         // If player falls too far in the stairwell area (no catch floor), reset to hub
         // Stairwell spans Z=184 to Z=220, falling below Y=-25 triggers respawn
@@ -636,6 +680,53 @@ export function FirstPersonController({
             newPosition.set(0, eyeLevel, 0);
             verticalVelocity.current = 0;
             isGrounded.current = true;
+        }
+
+        // ========== MOVEMENT AESTHETICS (Bobbing & Landing) ==========
+        const safeSpeed = speed > 0 ? speed : 0;
+        const isMoving = hasHorizontalMovement && isGrounded.current;
+
+        // 1. Head Bobbing
+        if (isMoving) {
+            const bobSpeed = (isSprinting || mobileSprint) ? 12 : 8;
+            const bobAmount = (isSprinting || mobileSprint) ? 0.08 : 0.04;
+            bobTimer.current += safeDelta * bobSpeed;
+
+            // Vertical bob only (remove horizontal sway to prevent shaking)
+            const bobY = Math.sin(bobTimer.current) * bobAmount;
+
+            newPosition.y += bobY;
+        } else {
+            // Smoothly reset bob timer when stopping
+            bobTimer.current = MathUtils.lerp(bobTimer.current, 0, safeDelta * 5);
+        }
+
+        // 2. Landing Impact
+        if (isGrounded.current && !lastGrounded.current) {
+            // Just landed!
+            landingDip.current = 0.15; // Initial dip amount
+        }
+        lastGrounded.current = isGrounded.current;
+
+        if (landingDip.current > 0) {
+            newPosition.y -= landingDip.current;
+            landingDip.current = MathUtils.lerp(landingDip.current, 0, safeDelta * 10);
+        }
+
+        // 3. Dynamic FOV (Speed sensation)
+        if ((camera as THREE.PerspectiveCamera).isPerspectiveCamera) {
+            const perspectiveCamera = camera as THREE.PerspectiveCamera;
+            // FOV shift should persist in air if we are sprinting and moving forward
+            const isSprintingEffectActive = hasHorizontalMovement && (isSprinting || mobileSprint);
+            const currentFov = perspectiveCamera.fov;
+            const targetFov = isSprintingEffectActive ? baseFovRef.current + 8 : baseFovRef.current;
+            const newFov = MathUtils.lerp(currentFov, targetFov, safeDelta * 8);
+
+            // Only update matrix if FOV has actually changed significantly to save performance
+            if (Math.abs(newFov - currentFov) > 0.001) {
+                perspectiveCamera.fov = newFov;
+                perspectiveCamera.updateProjectionMatrix();
+            }
         }
 
         // Apply new position

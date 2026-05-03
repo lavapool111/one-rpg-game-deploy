@@ -39,7 +39,7 @@ export const LeftUpperVaultZone = memo(function LeftUpperVaultZone() {
                     height={25}
                     northWall={12}
                     spawnZone={{
-                        id: 'upper_corridor',
+                        id: 'left_room_upper',
                         label: 'Upper Vault Room',
                         triggerPoint: { x: -180, y: 55, z: 0 },
                         enemies: [

@@ -37,9 +37,9 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                 }}
             >
                 {/* Central Lighting */}
-                <CulledPointLight position={[0, 16, 0]} intensity={80} color="#ffcc88" distance={50} decay={2} />
-                <CulledPointLight position={[-12, 14, -8]} intensity={30} color="#ff8844" distance={30} decay={2} />
-                <CulledPointLight position={[12, 14, 8]} intensity={30} color="#ff8844" distance={30} decay={2} />
+                <CulledPointLight position={[0, 16, 0]} intensity={60} color="#ffcc88" distance={35} decay={2} />
+                <CulledPointLight position={[-12, 14, -8]} intensity={20} color="#ff8844" distance={20} decay={2} />
+                <CulledPointLight position={[12, 14, 8]} intensity={20} color="#ff8844" distance={20} decay={2} />
 
                 {/* Pillars */}
                 <Pillar color={PILLAR_STONE_COLOR} basecolor={WALL_COLOR} position={[-16, 0, -12]} height={20} radius={1.25} />
@@ -68,7 +68,7 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                         <Hallway
                             length={20}
                             position={[0, 0, 10]}
-                            ceilingLights={true}
+                            ceilingLights={false}
                             wallTorches={true}
                         />
 
@@ -94,9 +94,9 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                                 respawnDelay: 5000
                             }}
                         >
-                            <CulledPointLight position={[0, 16, 0]} intensity={70} color="#ffcc88" distance={45} decay={2} />
-                            <CulledPointLight position={[-8, 14, -6]} intensity={25} color="#ff8844" distance={30} decay={2} />
-                            <CulledPointLight position={[8, 14, 6]} intensity={25} color="#ff8844" distance={30} decay={2} />
+                            <CulledPointLight position={[0, 16, 0]} intensity={50} color="#ffcc88" distance={35} decay={2} />
+                            <CulledPointLight position={[-8, 14, -6]} intensity={15} color="#ff8844" distance={20} decay={2} />
+                            <CulledPointLight position={[8, 14, 6]} intensity={15} color="#ff8844" distance={20} decay={2} />
 
                             <Pillar color={PILLAR_STONE_COLOR} basecolor={WALL_COLOR} position={[-10, 0, -8]} height={20} radius={1.0} />
                             <Pillar color={PILLAR_STONE_COLOR} basecolor={WALL_COLOR} position={[10, 0, -8]} height={20} radius={1.0} />
@@ -109,20 +109,20 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                             <Vault type="gold" position={[0, 0, 0]} goldAmount={500} />
                         </Room>
 
-                        {/* ========== DEEP VAULT PRISON HALLWAY ========== */}
-                        <ZoneCulled zone="deep_vault_prison">
+                        {/* ========== DEEP VAULT PRISON HALLWAY PART 1 ========== */}
+                        <ZoneCulled zone="deep_vault_prison_1">
                             <group position={[0, 0, 45]}>
-                                {/* Hallway Floor, Ceiling, and back wall. Length 240, width 20 */}
+                                {/* Hallway Floor, Ceiling, and back wall. Length 120, width 20 */}
                                 <Hallway
-                                    length={240}
+                                    length={120}
                                     width={20}
-                                    position={[0, 0, 120]}
+                                    position={[0, 0, 60]}
                                     hasFrontWall={false}
                                     hasLeftWall={false}
                                     hasRightWall={false}
                                     hasBackWall={false}
                                     spawnZone={{
-                                        id: 'deep_vault_prison',
+                                        id: 'deep_vault_prison_1',
                                         label: 'Deep Vault Prison',
                                         triggerPoint: { x: 0, y: -20, z: 460 },
                                         enemies: [
@@ -130,59 +130,109 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                                             { type: 'trombone', weight: 0.3, levelRange: [50, 65] },
                                             { type: 'french_horn', weight: 0.2, levelRange: [50, 65] },
                                             { type: 'tuba', weight: 0.2, levelRange: [50, 65] },
-
                                         ],
-                                        maxEnemies: 20,
-                                        respawnDelay: 15000
+                                        maxEnemies: 10,
+                                        respawnDelay: 10000
                                     }}
                                 />
 
-                                {/* Light and torches for the prison hallway */}
+                                {/* Light and torches for the prison hallway Part 1 */}
                                 <CulledPointLight position={[0, 16, 40]} intensity={50} color="#ff8844" distance={60} decay={2} />
                                 <CulledPointLight position={[0, 16, 120]} intensity={50} color="#ff8844" distance={60} decay={2} />
-                                <CulledPointLight position={[0, 16, 200]} intensity={50} color="#ff8844" distance={60} decay={2} />
 
                                 <WallTorch position={[-9.5, 10, 30]} rotation={Math.PI / 2} lightIntensity={10} />
                                 <WallTorch position={[9.5, 10, 30]} rotation={-Math.PI / 2} lightIntensity={10} />
                                 <WallTorch position={[-9.5, 10, 110]} rotation={Math.PI / 2} lightIntensity={10} />
                                 <WallTorch position={[9.5, 10, 110]} rotation={-Math.PI / 2} lightIntensity={10} />
-                                <WallTorch position={[-9.5, 10, 190]} rotation={Math.PI / 2} lightIntensity={10} />
-                                <WallTorch position={[9.5, 10, 190]} rotation={-Math.PI / 2} lightIntensity={10} />
 
                                 {/* Split Walls (Left/Right) to accommodate Prison Cells */}
                                 <SplitWall
-                                    width={240} height={WALL_HEIGHT}
-                                    position={[-10, 0, 120]}
+                                    width={120} height={WALL_HEIGHT}
+                                    position={[-10, 0, 60]}
                                     axis="z"
                                     openings={[
-                                        { position: -80, width: 8, bottom: 0, height: 10 }, // z=40
-                                        { position: -30, width: 8, bottom: 0, height: 10 }, // z=90
-                                        { position: 30, width: 8, bottom: 0, height: 10 },  // z=150
-                                        { position: 80, width: 8, bottom: 0, height: 10 },  // z=200
+                                        { position: -20, width: 8, bottom: 0, height: 10 }, // z=40
+                                        { position: 30, width: 8, bottom: 0, height: 10 },  // z=90
                                     ]}
                                 />
                                 <SplitWall
-                                    width={240} height={WALL_HEIGHT}
-                                    position={[10, 0, 120]}
+                                    width={120} height={WALL_HEIGHT}
+                                    position={[10, 0, 60]}
                                     axis="z"
                                     openings={[
-                                        { position: -80, width: 8, bottom: 0, height: 10 }, // z=40
-                                        { position: -30, width: 8, bottom: 0, height: 10 }, // z=90
-                                        { position: 30, width: 8, bottom: 0, height: 10 },  // z=150
-                                        { position: 80, width: 8, bottom: 0, height: 10 },  // z=200
+                                        { position: -20, width: 8, bottom: 0, height: 10 }, // z=40
+                                        { position: 30, width: 8, bottom: 0, height: 10 },  // z=90
                                     ]}
                                 />
 
-                                {/* 8 Prison Cells (4 per side) */}
+                                {/* 4 Prison Cells (2 per side) */}
                                 <PrisonCell id="deep-prison-left-1" position={[-14, 0, 40]} openSide="right" enemyLevel={60} caseLevel={2} />
                                 <PrisonCell id="deep-prison-left-2" position={[-14, 0, 90]} openSide="right" enemyLevel={60} caseLevel={2} />
-                                <PrisonCell id="deep-prison-left-3" position={[-14, 0, 150]} openSide="right" enemyLevel={60} caseLevel={2} />
-                                <PrisonCell id="deep-prison-left-4" position={[-14, 0, 200]} openSide="right" enemyLevel={60} caseLevel={2} />
 
                                 <PrisonCell id="deep-prison-right-1" position={[14, 0, 40]} openSide="left" enemyLevel={60} caseLevel={2} />
                                 <PrisonCell id="deep-prison-right-2" position={[14, 0, 90]} openSide="left" enemyLevel={60} caseLevel={2} />
-                                <PrisonCell id="deep-prison-right-3" position={[14, 0, 150]} openSide="left" enemyLevel={60} caseLevel={2} />
-                                <PrisonCell id="deep-prison-right-4" position={[14, 0, 200]} openSide="left" enemyLevel={60} caseLevel={2} />
+                            </group>
+                        </ZoneCulled>
+
+                        {/* ========== DEEP VAULT PRISON HALLWAY PART 2 ========== */}
+                        <ZoneCulled zone="deep_vault_prison_2">
+                            <group position={[0, 0, 165]}>
+                                {/* Hallway Floor, Ceiling, and back wall. Length 120, width 20 */}
+                                <Hallway
+                                    length={120}
+                                    width={20}
+                                    position={[0, 0, 60]}
+                                    hasFrontWall={false}
+                                    hasLeftWall={false}
+                                    hasRightWall={false}
+                                    hasBackWall={false}
+                                    spawnZone={{
+                                        id: 'deep_vault_prison_2',
+                                        label: 'Deep Vault Prison',
+                                        triggerPoint: { x: 0, y: -20, z: 580 },
+                                        enemies: [
+                                            { type: 'trumpet', weight: 0.3, levelRange: [50, 65] },
+                                            { type: 'trombone', weight: 0.3, levelRange: [50, 65] },
+                                            { type: 'french_horn', weight: 0.2, levelRange: [50, 65] },
+                                            { type: 'tuba', weight: 0.2, levelRange: [50, 65] },
+                                        ],
+                                        maxEnemies: 10,
+                                        respawnDelay: 10000
+                                    }}
+                                />
+
+                                {/* Light and torches for the prison hallway Part 2 */}
+                                <CulledPointLight position={[0, 16, 80]} intensity={50} color="#ff8844" distance={60} decay={2} />
+
+                                <WallTorch position={[-9.5, 10, 70]} rotation={Math.PI / 2} lightIntensity={10} />
+                                <WallTorch position={[9.5, 10, 70]} rotation={-Math.PI / 2} lightIntensity={10} />
+
+                                {/* Split Walls (Left/Right) to accommodate Prison Cells */}
+                                <SplitWall
+                                    width={120} height={WALL_HEIGHT}
+                                    position={[-10, 0, 60]}
+                                    axis="z"
+                                    openings={[
+                                        { position: -30, width: 8, bottom: 0, height: 10 }, // z=30
+                                        { position: 20, width: 8, bottom: 0, height: 10 },  // z=80
+                                    ]}
+                                />
+                                <SplitWall
+                                    width={120} height={WALL_HEIGHT}
+                                    position={[10, 0, 60]}
+                                    axis="z"
+                                    openings={[
+                                        { position: -30, width: 8, bottom: 0, height: 10 }, // z=30
+                                        { position: 20, width: 8, bottom: 0, height: 10 },  // z=80
+                                    ]}
+                                />
+
+                                {/* 4 Prison Cells (2 per side) */}
+                                <PrisonCell id="deep-prison-left-3" position={[-14, 0, 30]} openSide="right" enemyLevel={60} caseLevel={2} />
+                                <PrisonCell id="deep-prison-left-4" position={[-14, 0, 80]} openSide="right" enemyLevel={60} caseLevel={2} />
+
+                                <PrisonCell id="deep-prison-right-3" position={[14, 0, 30]} openSide="left" enemyLevel={60} caseLevel={2} />
+                                <PrisonCell id="deep-prison-right-4" position={[14, 0, 80]} openSide="left" enemyLevel={60} caseLevel={2} />
 
                                 {/* ========== DEEP VAULT TRIAL ROOM ========== */}
                                 <DeepVaultTrialRoom />
@@ -198,11 +248,11 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                             length={70}
                             position={[-35, 0, 0]}
                             rotation={[0, -Math.PI / 2, 0]}
-                            ceilingLights={true}
+                            ceilingLights={false}
                             wallTorches={true}
                             pillars={true}
                             spawnZone={{
-                                id: 'west_tuba_corridor',
+                                id: 'west_corridor',
                                 label: 'West Tuba Corridor',
                                 triggerPoint: { x: -60, y: -20, z: 360 },
                                 enemies: [
@@ -222,7 +272,7 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                             eastWall={12}
                             hasCeiling={true}
                             spawnZone={{
-                                id: 'west_vault_room',
+                                id: 'west_vault',
                                 label: 'West Vault Room',
                                 triggerPoint: { x: -108, y: -20, z: 360 },
                                 enemies: [
@@ -234,7 +284,7 @@ export const CircularVaultZone = memo(function CircularVaultZone() {
                                 respawnDelay: 12000
                             }}
                         >
-                            <CulledPointLight position={[0, 16, 0]} intensity={60} color="#ffcc88" distance={40} decay={2} />
+                            <CulledPointLight position={[0, 16, 0]} intensity={50} color="#ffcc88" distance={35} decay={2} />
 
                             <Pillar color={PILLAR_STONE_COLOR} basecolor={WALL_COLOR} position={[-10, 0, -8]} height={20} radius={1.0} />
                             <Pillar color={PILLAR_STONE_COLOR} basecolor={WALL_COLOR} position={[10, 0, -8]} height={20} radius={1.0} />

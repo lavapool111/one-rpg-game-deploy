@@ -6,11 +6,13 @@ import { Group, Vector3 } from 'three';
 import * as THREE from 'three';
 import { usePlayerStore, useGameStore, useAccessoryStore } from '@/lib/store';
 import { roundToTenths, processEnemyDeath, calculateEnemyHealth } from '@/lib/enemies/enemyUtils';
+import { getEnemyDefense } from '@/lib/game/stats';
+import { applyFlatDefense } from '@/lib/enemies/damageUtils';
 import { hitboxMat } from '@/lib/enemies/enemyMaterials';
 import { Merged } from '@react-three/drei';
 import { EnemyHealthBar } from './EnemyHealthBar';
 import { getStatsForLevel } from '@/lib/game/stats';
-import { applyEnemyMovement, shouldUpdateEnemyFrame, registerEnemyPosition, unregisterEnemyPosition, applySeparation } from '@/lib/enemies/enemyMovement';
+import { applyEnemyMovement, shouldUpdateEnemyFrame, registerEnemyPosition, unregisterEnemyPosition, applySeparation, RectangleBoundary } from '@/lib/enemies/enemyMovement';
 import { getTrumpetDrops } from '@/lib/enemies/enemyDrops';
 import { useEnemyState } from '@/lib/enemies/useEnemyState';
 import { Pillar, checkLineOfSight } from '@/lib/game/pillars';
@@ -68,6 +70,8 @@ interface TrumpetProps {
     arenaRadius?: number;
     /** Center of the boundary (defaults to 0,0,0) */
     arenaCenter?: [number, number, number];
+    /** Rectangular boundary for corridors */
+    rectangleBoundary?: RectangleBoundary;
     /** If true, teleport to center when out of bounds */
     teleportToCenterOnOOB?: boolean;
     /** Optional models from Merged for instancing */
@@ -159,7 +163,7 @@ export function TrumpetInstances({ children }: { children: React.ReactNode }) {
     );
 }
 
-export const Trumpet = memo(function Trumpet({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], teleportToCenterOnOOB = false, models: propModels }: TrumpetProps) {
+export const Trumpet = memo(function Trumpet({ id, initialPosition, level = 1, onDeath, pillars = [], arenaRadius = 375, arenaCenter = [0, 0, 0], rectangleBoundary, teleportToCenterOnOOB = false, models: propModels }: TrumpetProps) {
     const contextModels = useContext(TrumpetContext);
     const models = propModels || contextModels;
     const groupRef = useRef<Group>(null);
@@ -287,6 +291,7 @@ export const Trumpet = memo(function Trumpet({ id, initialPosition, level = 1, o
                 pillars,
                 arenaCenter,
                 arenaRadius,
+                rectangleBoundary,
                 teleportToCenterOnOOB
             });
 
@@ -311,6 +316,7 @@ export const Trumpet = memo(function Trumpet({ id, initialPosition, level = 1, o
                 pillars,
                 arenaCenter,
                 arenaRadius,
+                rectangleBoundary,
                 teleportToCenterOnOOB
             });
 
@@ -374,7 +380,9 @@ export const Trumpet = memo(function Trumpet({ id, initialPosition, level = 1, o
             takeDamage,
             poisonState,
             pillars,
-            direction.current
+            direction.current,
+            'trumpet',
+            id
         );
 
         // Attack animation - scale up when attacking
@@ -401,10 +409,15 @@ export const Trumpet = memo(function Trumpet({ id, initialPosition, level = 1, o
         });
     };
 
+    // Take Damage
     const takeDamage = (amount: number, type: 'normal' | 'crit' | 'superCrit' = 'normal') => {
-        const newHealth = Math.max(0, healthRef.current - amount);
+        // Calculate and apply piecewise flat defense
+        const defensePoints = getEnemyDefense(level);
+        const reducedAmount = applyFlatDefense(amount, defensePoints, 0);
+
+        const newHealth = Math.max(0, healthRef.current - reducedAmount);
         healthRef.current = newHealth;
-        damageNumberRef.current = { value: Number(amount.toFixed(2)), time: Date.now(), type };
+        damageNumberRef.current = { value: Number(reducedAmount.toFixed(2)), time: Date.now(), type };
 
         // Check for death
         if (newHealth <= 0 && isAlive) {

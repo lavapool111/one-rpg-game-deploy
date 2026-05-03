@@ -94,7 +94,7 @@ export function AltarIntroScreen() {
             </button>
 
             {/* Lore content */}
-            <div className="max-w-3xl px-8 space-y-6 text-center">
+            <div className="max-w-3xl w-full max-h-[60vh] overflow-y-auto pb-8 px-8 space-y-6 text-center">
                 {ALTAR_LORE_TEXT.map((paragraph, index) => {
                     if (index > visibleParagraphs) return null;
 

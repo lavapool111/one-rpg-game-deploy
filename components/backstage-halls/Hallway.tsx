@@ -2,7 +2,7 @@ import React, { memo, useRef, useEffect } from 'react';
 import * as THREE from 'three';
 import { WALL_COLOR, WALL_HEIGHT } from './BackstageHalls';
 import { StoneTileFloor } from './StoneTileFloor';
-import { CulledPointLight, WallTorch, Pillar } from './DungeonDecorations';
+import { CulledPointLight, WallTorch, Pillar, WallContext, CeilingContext } from './DungeonDecorations';
 import { SpawnZoneProps, registerSpawnZone, unregisterSpawnZone } from '@/lib/game/spawnZoneRegistry';
 
 export interface HallwayProps {
@@ -49,6 +49,8 @@ export const Hallway = memo(function Hallway({
     spawnZone,
     children
 }: HallwayProps) {
+    const wallModels = React.useContext(WallContext);
+    const ceilingModels = React.useContext(CeilingContext);
     const groupRef = useRef<THREE.Group>(null);
 
     // Register spawn zone on mount
@@ -125,41 +127,74 @@ export const Hallway = memo(function Hallway({
             {/* Left Wall (-X side) */}
             {hasLeftWall && (
                 <mesh position={[-width / 2 - 0.5, height / 2, 0]}>
-                    <boxGeometry args={[1, height, length]} />
-                    <meshStandardMaterial color={color} roughness={0.9} />
+                    {wallModels ? (
+                        <wallModels.wall scale={[1, height, length]} color={color} />
+                    ) : (
+                        <>
+                            <boxGeometry args={[1, height, length]} />
+                            <meshStandardMaterial color={color} roughness={0.9} />
+                        </>
+                    )}
                 </mesh>
             )}
 
             {/* Right Wall (+X side) */}
             {hasRightWall && (
                 <mesh position={[width / 2 + 0.5, height / 2, 0]}>
-                    <boxGeometry args={[1, height, length]} />
-                    <meshStandardMaterial color={color} roughness={0.9} />
+                    {wallModels ? (
+                        <wallModels.wall scale={[1, height, length]} color={color} />
+                    ) : (
+                        <>
+                            <boxGeometry args={[1, height, length]} />
+                            <meshStandardMaterial color={color} roughness={0.9} />
+                        </>
+                    )}
                 </mesh>
             )}
 
             {/* Front Wall (-Z side, closest to local origin) */}
             {hasFrontWall && (
                 <mesh position={[0, height / 2, -length / 2 - 0.5]}>
-                    <boxGeometry args={[width + 2, height, 1]} />
-                    <meshStandardMaterial color={color} roughness={0.9} />
+                    {wallModels ? (
+                        <wallModels.wall scale={[width + 2, height, 1]} color={color} />
+                    ) : (
+                        <>
+                            <boxGeometry args={[width + 2, height, 1]} />
+                            <meshStandardMaterial color={color} roughness={0.9} />
+                        </>
+                    )}
                 </mesh>
             )}
 
             {/* Back Wall (+Z side, furthest from local origin) */}
             {hasBackWall && (
                 <mesh position={[0, height / 2, length / 2 + 0.5]}>
-                    <boxGeometry args={[width + 2, height, 1]} />
-                    <meshStandardMaterial color={color} roughness={0.9} />
+                    {wallModels ? (
+                        <wallModels.wall scale={[width + 2, height, 1]} color={color} />
+                    ) : (
+                        <>
+                            <boxGeometry args={[width + 2, height, 1]} />
+                            <meshStandardMaterial color={color} roughness={0.9} />
+                        </>
+                    )}
                 </mesh>
             )}
 
             {/* Ceiling */}
             {hasCeiling && (
-                <mesh position={[0, height, 0]} rotation={[-Math.PI / 2, 0, 0]}>
-                    <planeGeometry args={[width, length]} />
-                    <meshStandardMaterial color={color} roughness={0.9} side={THREE.DoubleSide} />
-                </mesh>
+                ceilingModels ? (
+                    <ceilingModels.ceiling
+                        position={[0, height, 0]}
+                        rotation={[-Math.PI / 2, 0, 0]}
+                        scale={[width, length, 1]}
+                        color={color}
+                    />
+                ) : (
+                    <mesh position={[0, height, 0]} rotation={[-Math.PI / 2, 0, 0]}>
+                        <planeGeometry args={[width, length]} />
+                        <meshStandardMaterial color={color} roughness={0.9} side={THREE.DoubleSide} />
+                    </mesh>
+                )
             )}
 
             {/* Auto-decorations */}

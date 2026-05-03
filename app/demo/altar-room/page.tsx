@@ -35,6 +35,11 @@ export default function AltarRoomDemo() {
     useEffect(() => {
         setActiveConfig('altar_room');
         resetPlayer();
+        // Force a stat update to sync with the new config immediately
+        const accStore = require('@/lib/store/accessoryStore').useAccessoryStore.getState();
+        // Recursively trigger update
+        accStore.equipReed(accStore.equippedReed);
+
         // Position player just before the trigger point
         setPosition(0, 1.5, 560);
 

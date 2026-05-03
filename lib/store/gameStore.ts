@@ -94,6 +94,7 @@ export interface GameStore {
     incrementAltarDeathCount: () => void;
     resetAltarDeathCount: () => void;
     setAltarIndex: (index: number) => void;
+    failAltarRun: () => void;
 
     // --- Outer Backstage ---
     outerBackstageUnlocked: boolean;
@@ -148,6 +149,21 @@ export const useGameStore = create<GameStore>()(
         incrementAltarDeathCount: () => set((state: GameStore) => ({ altarDeathCount: state.altarDeathCount + 1, version: state.version + 1 })),
         resetAltarDeathCount: () => set((state: GameStore) => ({ altarDeathCount: 0, version: state.version + 1 })),
         setAltarIndex: (index: number) => set((state: GameStore) => ({ currentAltarIndex: index, version: state.version + 1 })),
+        failAltarRun: () => {
+            const state = get();
+            if (!state.isInAltarRoom) return;
+
+            set((state: GameStore) => ({
+                altarDeathCount: 0,
+                altarRoomWave: 0,
+                altarRitualStarted: false,
+                isInAltarRoom: false,
+                version: state.version + 1
+            }));
+
+            // Teleport player back to the area where altar failers respawn
+            usePlayerStore.getState().setPosition(0, 1.5, 560);
+        },
 
         // --- Outer Backstage ---
         outerBackstageUnlocked: false,

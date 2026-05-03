@@ -119,6 +119,54 @@ export function getMeldTierCost(meldType: MeldType, targetTier: number): Array<{
     return costs;
 }
 
+// ============= WEAPON MELDING HELPERS =============
+
+import {
+    WeaponMeldType,
+    WeaponMeldTierStat,
+    WEAPON_MELD_TIER_STATS,
+    WEAPON_MELD_TIER_COSTS,
+    WEAPON_TIER_DAMAGE_MULTIPLIERS,
+} from './inventoryData';
+
+/**
+ * Get the primary stat bonus for a weapon meld type at a given tier
+ */
+export function getWeaponMeldStats(meldType: WeaponMeldType, tier: number): { primary: number; damageMultiplier: number } {
+    if (tier < 1 || tier > 5) return { primary: 0, damageMultiplier: 1.0 };
+    const tierStats = WEAPON_MELD_TIER_STATS[tier - 1];
+    const damageMultiplier = WEAPON_TIER_DAMAGE_MULTIPLIERS[tier];
+
+    const primaryKey: keyof WeaponMeldTierStat =
+        meldType === 'plated' ? 'abilityTickBonus' :
+            meldType === 'weaved' ? 'range' :
+                meldType === 'sundered' ? 'critFactor' :
+                    meldType === 'metallic' ? 'impact' :
+                        'defensePenetration';
+
+    return { primary: tierStats[primaryKey], damageMultiplier };
+}
+
+/**
+ * Get the cost to upgrade a weapon meld to a target tier
+ */
+export function getWeaponMeldTierCost(meldType: WeaponMeldType, targetTier: number): Array<{ itemId: string; quantity: number }> {
+    if (targetTier < 2 || targetTier > 5) return [];
+    const costData = WEAPON_MELD_TIER_COSTS[targetTier - 2];
+    const costs: Array<{ itemId: string; quantity: number }> = [];
+
+    for (const frag of costData.fragments) {
+        costs.push({ itemId: `${meldType}_fragment_t${frag.tier}`, quantity: frag.quantity });
+    }
+
+    if (costData.heavyValves > 0) costs.push({ itemId: 'heavy_valves', quantity: costData.heavyValves });
+    if (costData.reinforcedValves > 0) costs.push({ itemId: 'reinforced_valves', quantity: costData.reinforcedValves });
+    if (costData.infusedValves > 0) costs.push({ itemId: 'infused_valves', quantity: costData.infusedValves });
+    if (costData.moonlightAzarite > 0) costs.push({ itemId: 'moonlight_azarite', quantity: costData.moonlightAzarite });
+
+    return costs;
+}
+
 // ============= CASE HELPERS =============
 
 const CASE_DATA_MAP = new Map(CASE_DATA.map(c => [c.id, c]));
