@@ -14,6 +14,6 @@ export default defineConfig({
   datasource: {
     // For Prisma CLI (migrate, introspect, studio), we use the Direct URL (port 5432)
     // because connection poolers (port 6543) often don't support DDL operations.
-    url: env("DIRECT_URL"),
+    url: process.env.DIRECT_URL || process.env.DATABASE_URL,
   },
 });
