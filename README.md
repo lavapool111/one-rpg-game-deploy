@@ -1,6 +1,6 @@
 # CODA
 
-A music-driven RPG game built with Next.js, React Three Fiber, and TypeScript.
+A music-driven RPG game built with Next.js, React Three Fiber, and TypeScript
 
 
 ## 📦 Production Build Output (`/dist`)
